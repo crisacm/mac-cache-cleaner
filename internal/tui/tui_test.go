@@ -351,3 +351,28 @@ func TestQuitKeySetsQuitting(t *testing.T) {
 	require.NotNil(t, cmd, "q must return a command (tea.Quit)")
 	require.Empty(t, m.View(), "a quitting model renders nothing")
 }
+
+func TestTabNavigation(t *testing.T) {
+	m, _ := testDeps(t)
+	require.Equal(t, screenOverview, m.screen)
+
+	tab := tea.KeyMsg{Type: tea.KeyTab}
+	shiftTab := tea.KeyMsg{Type: tea.KeyShiftTab}
+
+	_, _ = m.Update(tab)
+	require.Equal(t, screenApps, m.screen)
+	for i := 0; i < len(tabs)-2; i++ {
+		_, _ = m.Update(tab)
+	}
+	require.Equal(t, screenPermissions, m.screen, "tab cycles forward to the last tab")
+	_, _ = m.Update(tab)
+	require.Equal(t, screenOverview, m.screen, "tab wraps around")
+	_, _ = m.Update(shiftTab)
+	require.Equal(t, screenPermissions, m.screen, "shift+tab cycles backward")
+
+	// Every screen renders without panicking.
+	for _, s := range []screen{screenOverview, screenApps, screenCaches, screenOrphans, screenLarge, screenScan, screenPermissions} {
+		m.screen = s
+		require.NotEmpty(t, m.View())
+	}
+}
