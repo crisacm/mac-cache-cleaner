@@ -21,6 +21,7 @@ import (
 	"github.com/crisacm/mac-cache-cleaner/internal/large"
 	"github.com/crisacm/mac-cache-cleaner/internal/orphan"
 	"github.com/crisacm/mac-cache-cleaner/internal/policy"
+	"github.com/crisacm/mac-cache-cleaner/internal/render"
 	"github.com/crisacm/mac-cache-cleaner/internal/scanner"
 	"github.com/crisacm/mac-cache-cleaner/internal/store"
 )
@@ -46,7 +47,7 @@ func New(home string, cfg config.Config, p *policy.Policy, st *store.Store, in i
 // Execute runs the CLI and returns a process exit code.
 func (a *App) Execute(ctx context.Context, args []string) int {
 	if err := policy.EnsureNotRoot(); err != nil {
-		fmt.Fprintln(a.Err, "mcc:", Sanitize(err.Error()))
+		fmt.Fprintln(a.Err, "mcc:", render.Sanitize(err.Error()))
 		return exitCode(err)
 	}
 	root := a.rootCmd()
@@ -58,7 +59,7 @@ func (a *App) Execute(ctx context.Context, args []string) int {
 	root.SilenceUsage = true
 
 	if err := root.ExecuteContext(ctx); err != nil {
-		fmt.Fprintln(a.Err, "mcc:", Sanitize(err.Error()))
+		fmt.Fprintln(a.Err, "mcc:", render.Sanitize(err.Error()))
 		return exitCode(err)
 	}
 	return domain.ExitOK
@@ -219,7 +220,7 @@ func (a *App) runScan(ctx context.Context, cmd *cobra.Command) error {
 
 func (a *App) renderScan(res scanner.Result, roots []string) {
 	fmt.Fprintf(a.Out, "Scanned %d entries in %d root(s)\n", res.Totals.Entries, len(roots))
-	fmt.Fprintf(a.Out, "On disk: %s  (logical: %s)\n", FormatBytes(res.Totals.AllocatedBytes), FormatBytes(res.Totals.LogicalBytes))
+	fmt.Fprintf(a.Out, "On disk: %s  (logical: %s)\n", render.FormatBytes(res.Totals.AllocatedBytes), render.FormatBytes(res.Totals.LogicalBytes))
 	if len(res.ByClass) > 0 {
 		fmt.Fprintln(a.Out, "By data class:")
 		classes := make([]domain.DataClass, 0, len(res.ByClass))
@@ -231,7 +232,7 @@ func (a *App) renderScan(res scanner.Result, roots []string) {
 		})
 		for _, c := range classes {
 			t := res.ByClass[c]
-			fmt.Fprintf(a.Out, "  %-20s %10s  (%d)\n", c, FormatBytes(t.AllocatedBytes), t.Entries)
+			fmt.Fprintf(a.Out, "  %-20s %10s  (%d)\n", c, render.FormatBytes(t.AllocatedBytes), t.Entries)
 		}
 	}
 	if len(res.Inaccessible) > 0 {
@@ -252,14 +253,14 @@ func (a *App) explainRoots(ctx context.Context, roots []string, asJSON bool) err
 		if err != nil {
 			return err
 		}
-		out = append(out, explanation{Root: Redact(v.Path, a.Home, false), Tier: v.Tier.String(), Decision: string(v.Decision), Reason: v.Reason})
+		out = append(out, explanation{Root: render.Redact(v.Path, a.Home, false), Tier: v.Tier.String(), Decision: string(v.Decision), Reason: v.Reason})
 	}
 	if asJSON {
 		return writeJSON(a.Out, out)
 	}
 	t := &table{header: []string{"ROOT", "TIER", "DECISION", "REASON"}}
 	for _, e := range out {
-		t.add(e.Root, e.Tier, e.Decision, Sanitize(e.Reason))
+		t.add(e.Root, e.Tier, e.Decision, render.Sanitize(e.Reason))
 	}
 	t.render(a.Out)
 	return nil
@@ -298,7 +299,7 @@ func (a *App) runApps(ctx context.Context, cmd *cobra.Command) error {
 	}
 	t := &table{header: []string{"NAME", "BUNDLE ID", "SIZE", "DATA", "PATH"}}
 	for _, app := range list {
-		t.add(Sanitize(app.Name), Sanitize(app.BundleID), FormatBytes(app.AllocatedBytes), FormatBytes(app.DataBytes), Redact(app.Path, a.Home, false))
+		t.add(render.Sanitize(app.Name), render.Sanitize(app.BundleID), render.FormatBytes(app.AllocatedBytes), render.FormatBytes(app.DataBytes), render.Redact(app.Path, a.Home, false))
 	}
 	t.render(a.Out)
 	return nil
@@ -334,7 +335,7 @@ func (a *App) runCache(ctx context.Context, cmd *cobra.Command) error {
 	}
 	t := &table{header: []string{"NAME", "CLASS", "SIZE", "PATH"}}
 	for _, e := range list {
-		t.add(Sanitize(e.Name), e.DataClass.String(), FormatBytes(e.AllocatedBytes), Redact(e.Path, a.Home, false))
+		t.add(render.Sanitize(e.Name), e.DataClass.String(), render.FormatBytes(e.AllocatedBytes), render.Redact(e.Path, a.Home, false))
 	}
 	t.render(a.Out)
 	return nil
@@ -385,7 +386,7 @@ func (a *App) runOrphans(ctx context.Context, cmd *cobra.Command) error {
 	}
 	t := &table{header: []string{"CONFIDENCE", "BUNDLE ID", "SIZE", "PATH"}}
 	for _, o := range list {
-		t.add(string(o.Confidence), Sanitize(o.BundleID), FormatBytes(o.AllocatedBytes), Redact(o.Path, a.Home, false))
+		t.add(string(o.Confidence), render.Sanitize(o.BundleID), render.FormatBytes(o.AllocatedBytes), render.Redact(o.Path, a.Home, false))
 	}
 	t.render(a.Out)
 	return nil
@@ -455,7 +456,7 @@ func (a *App) runLarge(ctx context.Context, cmd *cobra.Command) error {
 	}
 	t := &table{header: []string{"SIZE", "KIND", "CLASS", "PATH"}}
 	for _, it := range list {
-		t.add(FormatBytes(it.AllocatedBytes), string(it.Kind), it.DataClass.String(), Redact(it.Path, a.Home, false))
+		t.add(render.FormatBytes(it.AllocatedBytes), string(it.Kind), it.DataClass.String(), render.Redact(it.Path, a.Home, false))
 	}
 	t.render(a.Out)
 	return nil

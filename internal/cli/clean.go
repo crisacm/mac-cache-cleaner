@@ -13,6 +13,7 @@ import (
 	"github.com/crisacm/mac-cache-cleaner/internal/cache"
 	"github.com/crisacm/mac-cache-cleaner/internal/cleaner"
 	"github.com/crisacm/mac-cache-cleaner/internal/domain"
+	"github.com/crisacm/mac-cache-cleaner/internal/render"
 )
 
 func (a *App) newCleanCmd() *cobra.Command {
@@ -84,7 +85,7 @@ func (a *App) planClean(ctx context.Context, cmd *cobra.Command) error {
 		fmt.Fprintln(a.Out, "nothing to clean: no eligible items")
 	} else {
 		fmt.Fprintf(a.Out, "Plan %s: %d item(s), %s, expires %s\n",
-			res.Plan.PlanID, len(res.Plan.Items), FormatBytes(res.Plan.TotalSize),
+			res.Plan.PlanID, len(res.Plan.Items), render.FormatBytes(res.Plan.TotalSize),
 			res.Plan.ExpiresAt.Format(time.RFC3339))
 		fmt.Fprintln(a.Out, "Nothing has been deleted. Apply with: mcc clean --apply --plan-id "+res.Plan.PlanID)
 	}
@@ -92,7 +93,7 @@ func (a *App) planClean(ctx context.Context, cmd *cobra.Command) error {
 		fmt.Fprintf(a.Out, "%d item(s) skipped:\n", len(res.Skipped))
 		t := &table{header: []string{"PATH", "REASON"}}
 		for _, s := range res.Skipped {
-			t.add(Redact(s.Path, a.Home, false), Sanitize(s.Reason))
+			t.add(render.Redact(s.Path, a.Home, false), render.Sanitize(s.Reason))
 		}
 		t.render(a.Out)
 	}
@@ -187,10 +188,10 @@ func (a *App) applyClean(ctx context.Context, cmd *cobra.Command) error {
 	}
 	fmt.Fprintf(a.Out, "Applied %d, skipped %d, failed %d\n", len(res.Applied), len(res.Skipped), len(res.Failed))
 	for _, o := range res.Skipped {
-		fmt.Fprintf(a.Out, "  skipped %s (%s)\n", Redact(o.Path, a.Home, false), Sanitize(o.Reason))
+		fmt.Fprintf(a.Out, "  skipped %s (%s)\n", render.Redact(o.Path, a.Home, false), render.Sanitize(o.Reason))
 	}
 	for _, o := range res.Failed {
-		fmt.Fprintf(a.Out, "  failed %s (%s)\n", Redact(o.Path, a.Home, false), Sanitize(o.Reason))
+		fmt.Fprintf(a.Out, "  failed %s (%s)\n", render.Redact(o.Path, a.Home, false), render.Sanitize(o.Reason))
 	}
 	return nil
 }
@@ -198,7 +199,7 @@ func (a *App) applyClean(ctx context.Context, cmd *cobra.Command) error {
 // confirm returns a confirmation callback that requires the exact word.
 func (a *App) confirm(prompt, word string) func(int, int64) (bool, error) {
 	return func(count int, total int64) (bool, error) {
-		fmt.Fprintf(a.Out, "%s: %d item(s), %s. Type %q to confirm: ", prompt, count, FormatBytes(total), word)
+		fmt.Fprintf(a.Out, "%s: %d item(s), %s. Type %q to confirm: ", prompt, count, render.FormatBytes(total), word)
 		reader := bufio.NewReader(a.In)
 		line, err := reader.ReadString('\n')
 		if err != nil && err != io.EOF {

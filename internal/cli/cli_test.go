@@ -91,13 +91,6 @@ func TestScanBlockedRootExitCode(t *testing.T) {
 	require.Equal(t, domain.ExitBlocked, code)
 }
 
-func TestSanitizeStripsEscapesAndControls(t *testing.T) {
-	require.Equal(t, "evilname", Sanitize("evil\x1b[31mname"))
-	require.Equal(t, "a\tb", Sanitize("a\tb"))
-	require.Equal(t, "ab", Sanitize("a\x00b"))
-	require.NotContains(t, Sanitize("\x1b]0;pwned\x07x"), "\x1b")
-}
-
 func TestParseSize(t *testing.T) {
 	tests := map[string]int64{
 		"1GB": 1 << 30, "1GiB": 1 << 30, "512MB": 512 << 20,
@@ -110,12 +103,6 @@ func TestParseSize(t *testing.T) {
 	}
 	_, err := ParseSize("nope")
 	require.ErrorIs(t, err, domain.ErrUsage)
-}
-
-func TestRedact(t *testing.T) {
-	require.Equal(t, "~/Library/Caches", Redact("/Users/x/Library/Caches", "/Users/x", false))
-	require.Equal(t, "~/Library/Caches/***", Redact("/Users/x/Library/Caches/secret", "/Users/x", true))
-	require.Equal(t, "~/Documents/***.pdf", Redact("/Users/x/Documents/report.pdf", "/Users/x", true))
 }
 
 func TestExitCodeMapping(t *testing.T) {

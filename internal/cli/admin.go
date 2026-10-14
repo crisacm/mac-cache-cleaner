@@ -14,6 +14,7 @@ import (
 	"github.com/crisacm/mac-cache-cleaner/internal/domain"
 	"github.com/crisacm/mac-cache-cleaner/internal/large"
 	"github.com/crisacm/mac-cache-cleaner/internal/orphan"
+	"github.com/crisacm/mac-cache-cleaner/internal/render"
 )
 
 // --- report ------------------------------------------------------------
@@ -96,15 +97,15 @@ func (a *App) runReport(ctx context.Context, cmd *cobra.Command) error {
 }
 
 func (a *App) renderReportHuman(d reportData, redact bool) {
-	path := func(p string) string { return Redact(p, a.Home, redact) }
+	path := func(p string) string { return render.Redact(p, a.Home, redact) }
 	fmt.Fprintf(a.Out, "Report for scan %s\n\n", d.ScanID)
 	fmt.Fprintf(a.Out, "Total: %s on disk (%s logical) across %d entries\n\n",
-		FormatBytes(d.Totals.AllocatedBytes), FormatBytes(d.Totals.LogicalBytes), d.Totals.Entries)
+		render.FormatBytes(d.Totals.AllocatedBytes), render.FormatBytes(d.Totals.LogicalBytes), d.Totals.Entries)
 
 	fmt.Fprintln(a.Out, "By data class:")
 	for _, c := range domain.DataClasses {
 		if t, ok := d.ByClass[c]; ok {
-			fmt.Fprintf(a.Out, "  %-20s %10s\n", c, FormatBytes(t.AllocatedBytes))
+			fmt.Fprintf(a.Out, "  %-20s %10s\n", c, render.FormatBytes(t.AllocatedBytes))
 		}
 	}
 
@@ -114,25 +115,25 @@ func (a *App) renderReportHuman(d reportData, redact bool) {
 	}
 	at := &table{header: []string{"NAME", "BUNDLE ID", "SIZE"}}
 	for _, app := range d.Apps {
-		at.add(Sanitize(app.Name), Sanitize(app.BundleID), FormatBytes(app.AllocatedBytes))
+		at.add(render.Sanitize(app.Name), render.Sanitize(app.BundleID), render.FormatBytes(app.AllocatedBytes))
 	}
 	section("Applications", at)
 
 	ct := &table{header: []string{"NAME", "CLASS", "SIZE", "PATH"}}
 	for _, e := range d.Caches {
-		ct.add(Sanitize(e.Name), e.DataClass.String(), FormatBytes(e.AllocatedBytes), path(e.Path))
+		ct.add(render.Sanitize(e.Name), e.DataClass.String(), render.FormatBytes(e.AllocatedBytes), path(e.Path))
 	}
 	section("Caches", ct)
 
 	lt := &table{header: []string{"SIZE", "PATH"}}
 	for _, it := range d.Large {
-		lt.add(FormatBytes(it.AllocatedBytes), path(it.Path))
+		lt.add(render.FormatBytes(it.AllocatedBytes), path(it.Path))
 	}
 	section("Large items", lt)
 
 	ot := &table{header: []string{"CONFIDENCE", "BUNDLE ID", "SIZE", "PATH"}}
 	for _, o := range d.Orphans {
-		ot.add(string(o.Confidence), Sanitize(o.BundleID), FormatBytes(o.AllocatedBytes), path(o.Path))
+		ot.add(string(o.Confidence), render.Sanitize(o.BundleID), render.FormatBytes(o.AllocatedBytes), path(o.Path))
 	}
 	section("Orphans", ot)
 	if !d.InstalledComplete {
@@ -141,10 +142,10 @@ func (a *App) renderReportHuman(d reportData, redact bool) {
 }
 
 func (a *App) renderReportMD(d reportData, redact bool) {
-	path := func(p string) string { return Redact(p, a.Home, redact) }
+	path := func(p string) string { return render.Redact(p, a.Home, redact) }
 	fmt.Fprintf(a.Out, "# MCC report — scan %s\n\n", d.ScanID)
 	fmt.Fprintf(a.Out, "**Total:** %s on disk (%s logical), %d entries\n\n",
-		FormatBytes(d.Totals.AllocatedBytes), FormatBytes(d.Totals.LogicalBytes), d.Totals.Entries)
+		render.FormatBytes(d.Totals.AllocatedBytes), render.FormatBytes(d.Totals.LogicalBytes), d.Totals.Entries)
 
 	mdTable := func(headers []string, rows [][]string) {
 		fmt.Fprintf(a.Out, "| %s |\n", strings.Join(headers, " | "))
@@ -156,7 +157,7 @@ func (a *App) renderReportMD(d reportData, redact bool) {
 		for _, r := range rows {
 			cells := make([]string, len(r))
 			for i, c := range r {
-				cells[i] = strings.ReplaceAll(Sanitize(c), "|", "\\|")
+				cells[i] = strings.ReplaceAll(render.Sanitize(c), "|", "\\|")
 			}
 			fmt.Fprintf(a.Out, "| %s |\n", strings.Join(cells, " | "))
 		}
@@ -167,7 +168,7 @@ func (a *App) renderReportMD(d reportData, redact bool) {
 	var classRows [][]string
 	for _, c := range domain.DataClasses {
 		if t, ok := d.ByClass[c]; ok {
-			classRows = append(classRows, []string{string(c), FormatBytes(t.AllocatedBytes)})
+			classRows = append(classRows, []string{string(c), render.FormatBytes(t.AllocatedBytes)})
 		}
 	}
 	mdTable([]string{"Class", "Size"}, classRows)
@@ -175,14 +176,14 @@ func (a *App) renderReportMD(d reportData, redact bool) {
 	fmt.Fprint(a.Out, "## Applications\n\n")
 	var appRows [][]string
 	for _, app := range d.Apps {
-		appRows = append(appRows, []string{Sanitize(app.Name), Sanitize(app.BundleID), FormatBytes(app.AllocatedBytes)})
+		appRows = append(appRows, []string{render.Sanitize(app.Name), render.Sanitize(app.BundleID), render.FormatBytes(app.AllocatedBytes)})
 	}
 	mdTable([]string{"Name", "Bundle ID", "Size"}, appRows)
 
 	fmt.Fprint(a.Out, "## Large items\n\n")
 	var largeRows [][]string
 	for _, it := range d.Large {
-		largeRows = append(largeRows, []string{FormatBytes(it.AllocatedBytes), path(it.Path)})
+		largeRows = append(largeRows, []string{render.FormatBytes(it.AllocatedBytes), path(it.Path)})
 	}
 	mdTable([]string{"Size", "Path"}, largeRows)
 }
@@ -236,14 +237,14 @@ func (a *App) showPermissions(ctx context.Context, cmd *cobra.Command) error {
 		DataDir  string       `json:"data_dir"`
 		Rules    []ruleOut    `json:"rules"`
 		Consents []consentOut `json:"consents"`
-	}{DataDir: Redact(a.Cfg.DataDir, a.Home, false)}
+	}{DataDir: render.Redact(a.Cfg.DataDir, a.Home, false)}
 
 	for _, r := range rules {
-		out.Rules = append(out.Rules, ruleOut{Prefix: Redact(r.Prefix, a.Home, false), Tier: r.Tier.String(), Note: r.Note})
+		out.Rules = append(out.Rules, ruleOut{Prefix: render.Redact(r.Prefix, a.Home, false), Tier: r.Tier.String(), Note: r.Note})
 	}
 	now := time.Now()
 	for _, c := range consents {
-		co := consentOut{Root: Redact(c.Root, a.Home, false), Tier: c.Tier.String(), GrantedAt: c.GrantedAt.Format(time.RFC3339), Active: c.Active(now)}
+		co := consentOut{Root: render.Redact(c.Root, a.Home, false), Tier: c.Tier.String(), GrantedAt: c.GrantedAt.Format(time.RFC3339), Active: c.Active(now)}
 		if !c.RevokedAt.IsZero() {
 			co.RevokedAt = c.RevokedAt.Format(time.RFC3339)
 		}
@@ -256,7 +257,7 @@ func (a *App) showPermissions(ctx context.Context, cmd *cobra.Command) error {
 	fmt.Fprintf(a.Out, "Data directory: %s\n\nTier table (compiled in; config cannot loosen it):\n", out.DataDir)
 	rt := &table{header: []string{"TIER", "PREFIX", "NOTE"}}
 	for _, r := range out.Rules {
-		rt.add(r.Tier, r.Prefix, Sanitize(r.Note))
+		rt.add(r.Tier, r.Prefix, render.Sanitize(r.Note))
 	}
 	rt.render(a.Out)
 
@@ -281,7 +282,7 @@ func (a *App) revokeConsent(ctx context.Context, root string) error {
 	if err := a.Store.RevokeConsent(ctx, resolved, time.Now()); err != nil {
 		return err
 	}
-	fmt.Fprintf(a.Out, "Revoked consent for %s\n", Redact(resolved, a.Home, false))
+	fmt.Fprintf(a.Out, "Revoked consent for %s\n", render.Redact(resolved, a.Home, false))
 	return nil
 }
 
@@ -301,13 +302,13 @@ func (a *App) grantConsent(ctx context.Context, root string) error {
 		return fmt.Errorf("%w: tier 2 can never be accessed", domain.ErrBlocked)
 	}
 	if verdict.Tier == domain.TierDefault {
-		fmt.Fprintf(a.Out, "%s is a default root; no consent needed.\n", Redact(resolved, a.Home, false))
+		fmt.Fprintf(a.Out, "%s is a default root; no consent needed.\n", render.Redact(resolved, a.Home, false))
 		return nil
 	}
 
 	fmt.Fprintf(a.Out, "Granting access to %s (tier %s). MCC reads metadata only and never includes Tier 1 data in automated plans.\n",
-		Redact(resolved, a.Home, false), verdict.Tier)
-	confirm := a.confirm("Grant consent for "+Redact(resolved, a.Home, false), "grant")
+		render.Redact(resolved, a.Home, false), verdict.Tier)
+	confirm := a.confirm("Grant consent for "+render.Redact(resolved, a.Home, false), "grant")
 	ok, err := confirm(1, 0)
 	if err != nil {
 		return err
@@ -362,13 +363,13 @@ func (a *App) dataShow(ctx context.Context, cmd *cobra.Command) error {
 		return err
 	}
 	if asJSON {
-		info.Dir = Redact(info.Dir, a.Home, false)
-		info.Path = Redact(info.Path, a.Home, false)
+		info.Dir = render.Redact(info.Dir, a.Home, false)
+		info.Path = render.Redact(info.Path, a.Home, false)
 		return writeJSON(a.Out, info)
 	}
-	fmt.Fprintf(a.Out, "Storage directory: %s\n", Redact(info.Dir, a.Home, false))
-	fmt.Fprintf(a.Out, "Database:          %s\n", Redact(info.Path, a.Home, false))
-	fmt.Fprintf(a.Out, "Database size:     %s\n", FormatBytes(info.SizeBytes))
+	fmt.Fprintf(a.Out, "Storage directory: %s\n", render.Redact(info.Dir, a.Home, false))
+	fmt.Fprintf(a.Out, "Database:          %s\n", render.Redact(info.Path, a.Home, false))
+	fmt.Fprintf(a.Out, "Database size:     %s\n", render.FormatBytes(info.SizeBytes))
 	fmt.Fprintf(a.Out, "Scans: %d, entries: %d, plans: %d, consents: %d, audit records: %d\n",
 		info.Scans, info.Entries, info.Plans, info.Consents, info.Audit)
 	fmt.Fprintln(a.Out, "Nothing else is stored; no file contents and no telemetry.")
