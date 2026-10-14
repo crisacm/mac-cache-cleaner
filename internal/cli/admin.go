@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -11,6 +10,7 @@ import (
 
 	"github.com/crisacm/mac-cache-cleaner/internal/apps"
 	"github.com/crisacm/mac-cache-cleaner/internal/cache"
+	"github.com/crisacm/mac-cache-cleaner/internal/consent"
 	"github.com/crisacm/mac-cache-cleaner/internal/domain"
 	"github.com/crisacm/mac-cache-cleaner/internal/large"
 	"github.com/crisacm/mac-cache-cleaner/internal/orphan"
@@ -275,14 +275,15 @@ func (a *App) showPermissions(ctx context.Context, cmd *cobra.Command) error {
 }
 
 func (a *App) revokeConsent(ctx context.Context, root string) error {
-	resolved, err := a.resolveRoot(root)
+	svc := consent.New(a.Store, a.Policy, a.IsTTY)
+	verdict, err := svc.Verdict(ctx, root)
 	if err != nil {
 		return err
 	}
-	if err := a.Store.RevokeConsent(ctx, resolved, time.Now()); err != nil {
+	if err := svc.Revoke(ctx, root); err != nil {
 		return err
 	}
-	fmt.Fprintf(a.Out, "Revoked consent for %s\n", render.Redact(resolved, a.Home, false))
+	fmt.Fprintf(a.Out, "Revoked consent for %s\n", render.Redact(verdict.Path, a.Home, false))
 	return nil
 }
 
@@ -290,44 +291,34 @@ func (a *App) grantConsent(ctx context.Context, root string) error {
 	if !a.IsTTY {
 		return fmt.Errorf("%w: consent can only be granted interactively on a TTY (SEC-ACC-07)", domain.ErrBlocked)
 	}
-	resolved, err := a.resolveRoot(root)
+	svc := consent.New(a.Store, a.Policy, a.IsTTY)
+	verdict, err := svc.Verdict(ctx, root)
 	if err != nil {
 		return err
 	}
-	verdict, err := a.Policy.RootVerdict(ctx, resolved)
-	if err != nil {
-		return err
-	}
-	if verdict.Tier == domain.TierSensitive {
-		return fmt.Errorf("%w: tier 2 can never be accessed", domain.ErrBlocked)
-	}
-	if verdict.Tier == domain.TierDefault {
-		fmt.Fprintf(a.Out, "%s is a default root; no consent needed.\n", render.Redact(resolved, a.Home, false))
+	switch {
+	case verdict.Blocked():
+		return fmt.Errorf("%w: %s: %s", domain.ErrBlocked, render.Redact(verdict.Path, a.Home, false), render.Sanitize(verdict.Reason))
+	case verdict.Tier == domain.TierDefault:
+		fmt.Fprintf(a.Out, "%s is a default root; no consent needed.\n", render.Redact(verdict.Path, a.Home, false))
 		return nil
 	}
 
 	fmt.Fprintf(a.Out, "Granting access to %s (tier %s). MCC reads metadata only and never includes Tier 1 data in automated plans.\n",
-		render.Redact(resolved, a.Home, false), verdict.Tier)
-	confirm := a.confirm("Grant consent for "+render.Redact(resolved, a.Home, false), "grant")
-	ok, err := confirm(1, 0)
+		render.Redact(verdict.Path, a.Home, false), verdict.Tier)
+	ok, err := a.confirm("Grant consent for "+render.Redact(verdict.Path, a.Home, false), "grant")(1, 0)
 	if err != nil {
 		return err
 	}
 	if !ok {
 		return fmt.Errorf("%w: consent not granted", domain.ErrBlocked)
 	}
-	if err := a.Store.GrantConsent(ctx, domain.Consent{Root: resolved, Tier: verdict.Tier, GrantedAt: time.Now()}); err != nil {
+	// The service re-checks that we are interactive and that the tier permits it.
+	if _, err := svc.Grant(ctx, root); err != nil {
 		return err
 	}
 	fmt.Fprintln(a.Out, "Consent recorded.")
 	return nil
-}
-
-func (a *App) resolveRoot(root string) (string, error) {
-	if !filepath.IsAbs(root) {
-		root = filepath.Join(a.Home, root)
-	}
-	return filepath.Clean(root), nil
 }
 
 // --- data --------------------------------------------------------------
