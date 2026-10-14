@@ -4,14 +4,14 @@ Herramienta de línea de comandos escrita en Go para **indexar y consultar el es
 
 A futuro, las mismas capacidades se expondrán como un **servidor MCP** para que agentes de IA puedan escanear el sistema, conocer el peso de cachés, apps y ubicaciones, y proponer qué eliminar (siempre con aprobación humana).
 
-> Estado: en diseño/desarrollo. Este documento describe la arquitectura objetivo y las convenciones del proyecto.
+> Estado: **Fase 1 (CLI) implementada**. La TUI (fase 2) y el servidor MCP (fase 3) todavía no.
 
 ## Roadmap
 
 | Fase | Entregable | Estado |
 |---|---|---|
-| 1 | CLI: `scan`, `apps`, `cache`, `orphans`, `large`, `clean`, `report`, `permissions`, `data` | En desarrollo |
-| 2 | TUI interactiva (`mcc tui`) | En desarrollo |
+| 1 | CLI: `scan`, `apps`, `cache`, `orphans`, `large`, `clean`, `report`, `permissions`, `data` | Implementado |
+| 2 | TUI interactiva (`mcc tui`) | Pendiente |
 | 3 | **Servidor MCP** (stdio): herramientas de solo lectura y de planificación para agentes | Futuro (el código se diseña desde ya para soportarlo) |
 
 Fuera de alcance: demonios en segundo plano, borrado automático, telemetría, servicios de red, elevación de privilegios, lectura del contenido de archivos y otros sistemas operativos.
@@ -51,7 +51,7 @@ mcc large [--min 1GB] [--path PATH]           # archivos/directorios pesados
 mcc clean --plan                              # crea un plan (dry-run), no cambia nada
 mcc clean --apply [--plan-id ID]              # ejecuta un plan (pide confirmación)
 mcc report [--json|--md] [--redact]           # reporte consolidado
-mcc permissions [revoke <root>]               # política efectiva y consentimientos
+mcc permissions [show|grant|revoke <root>]      # política efectiva y consentimientos
 mcc data show | purge                         # qué se guarda, dónde, y cómo borrarlo
 mcc tui                                       # interfaz interactiva (fase 2)
 ```
@@ -71,7 +71,7 @@ Las reglas completas están en [`SECURITY.md`](./SECURITY.md). Resumen:
   - *Nivel 2* (sensibles: Fotos internas, Llaves, iCloud, Mail, Mensajes, `~/.ssh`…): **nunca se acceden**, ni con consentimiento.
   - *Nivel 3* (discos externos, red, Time Machine): solo con `--root` explícito y consentimiento; Time Machine nunca.
 - **Consentimiento** por carpeta, solo interactivo, registrado y revocable. `--yes` no concede consentimiento.
-- **Limpieza segura**: plan inmutable con vencimiento, revalidación de cada ítem antes de actuar, **Papelera por defecto**, lista blanca de rutas, no se toca SIP ni `com.apple.*`, se omiten cachés de apps en ejecución.
+- **Limpieza segura**: plan inmutable con vencimiento, revalidación de cada ítem antes de actuar, **Papelera por defecto**, lista blanca de rutas, no se toca SIP ni `com.apple.*`, se omiten cachés de apps en ejecución. `mcc clean --apply` muestra la cantidad y el tamaño total y exige escribir `yes` (el borrado permanente exige además `DELETE`). Las raíces de la lista blanca (p. ej. `~/Library/Caches`) nunca entran en un plan; se ofrecen sus hijos directos.
 - **Sin telemetría ni red**: nada sale de tu equipo.
 - **Datos locales**: `~/Library/Application Support/mcc/` (permisos `0700`/`0600`). Con `mcc data show` ves qué hay y con `mcc data purge` lo borras.
 - No se ejecuta como root ni se piden privilegios.
@@ -184,7 +184,7 @@ make check    # todo lo anterior
 ### Pruebas
 
 - Tests *table-driven* con `testify`; fixtures en `t.TempDir()` y un `~/Library` falso en `testdata/`.
-- *Golden files* para la salida del CLI.
+- *Golden files* para la salida del CLI (`internal/cli/testdata/*.golden`).
 - Funcionales: dedup de hardlinks, archivos sparse, no seguir symlinks, `EPERM`, scoring de huérfanos, dry-run vs apply.
 - **De seguridad** (ver `SECURITY.md` §10): Nivel 2 nunca recorrido, consentimiento para Niveles 1/3, escapes por symlink o `..`, cambio de ítem entre plan y apply (TOCTOU), expiración de planes, negativa a ejecutar como root, cachés de apps en ejecución omitidas, sanitización de nombres hostiles, permisos del almacén, sin imports de red.
 - Los tests nunca deben tocar el directorio home real.

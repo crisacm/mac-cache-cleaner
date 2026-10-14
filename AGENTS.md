@@ -85,7 +85,7 @@ mcc orphans [--min-confidence high|medium|low]
 mcc large [--min 1GB] [--path PATH]
 mcc clean --plan | --apply [--plan-id ID]
 mcc report [--json|--md] [--redact]
-mcc permissions [revoke <root>]        # show effective policy / consents
+mcc permissions [show|grant|revoke <root>]        # show effective policy / consents
 mcc data show | purge                  # what is stored, where; wipe it
 mcc tui                                # phase 2
 ```

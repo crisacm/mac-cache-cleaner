@@ -59,19 +59,36 @@ y este proyecto se adhiere a [Versionado Semántico](https://semver.org/lang/es/
   ejecución, mueve a la Papelera por defecto (rename a `~/.Trash`, con respaldo
   vía `osascript`/Finder y argv explícitos), admite borrado permanente solo con
   bandera + confirmación extra, y escribe el registro de auditoría.
+- **CLI** (`internal/cli`): comandos `scan` (`--root`, `--full`, `--explain`),
+  `apps` (`--sort`), `cache` (`--app`), `orphans` (`--min-confidence`), `large`
+  (`--min`, `--path`), `clean` (`--plan`, `--apply`, `--plan-id`, `--permanent`,
+  `--entry`), `report` (`--json`, `--md`, `--redact`), `permissions`
+  (`show` | `grant` | `revoke`) y `data` (`show` | `purge`). Los comandos de
+  lectura aceptan `--json` y `--no-color`; la salida sanitiza caracteres de
+  control y ANSI; códigos de salida 0/1/2/3/4 (3 = resultado parcial). Incluye
+  configuración con viper (`~/.config/mcc/config.yaml`, claves cerradas, sin
+  perillas de política) y *golden files* en `internal/cli/testdata/`.
 
+### Notas / decisiones
 
-
-
-
-
-
-### Notas
-
-- El proyecto no hace ninguna llamada de red; `depguard` lo hace cumplir
-  (`SEC-COD-07`).
+- `clean --plan` **nunca** incluye las raíces de la lista blanca (p. ej.
+  `~/Library/Caches`) por `SEC-DEL-05`; en su lugar ofrece sus **hijos
+  directos** (las cachés reales por app) y omite las cachés de apps en
+  ejecución. Los datos de app (`app_data`) requieren selección explícita con
+  `--entry` (advertencia "puede contener datos del usuario").
+- La confirmación de `clean --apply` exige la palabra exacta `yes` (no basta
+  Enter); el borrado permanente exige además `DELETE`. El consentimiento de
+  Nivel 1/3 solo se concede de forma interactiva en un TTY (`mcc permissions
+  grant <root>`).
+- En la revalidación de `apply`, el tamaño se compara **solo en archivos**: las
+  entradas de directorio llevan el tamaño de subárbol, así que un directorio se
+  revalida por `mtime` + `(dev, inode)`.
+- Los `fixtures` se generan en `t.TempDir()`; los *golden files* del CLI viven
+  en `internal/cli/testdata/`.
 - Respecto al esquema del `README.md`, el índice añade `dev`/`inode` a `entries`
   (necesarios para deduplicar hardlinks y revalidar en `apply`), estado
-  (`finished_at`, `full`, `partial`) a `scans` y la tabla `inaccessible` para
-  resultados parciales (`SEC-ACC-05`).
+  (`finished_at`, `full`, `partial`) a `scans`, la tabla `inaccessible` para
+  resultados parciales (`SEC-ACC-05`) y `total_size` a `plans`.
+- El proyecto no hace ninguna llamada de red; `depguard` lo hace cumplir
+  (`SEC-COD-07`).
 
