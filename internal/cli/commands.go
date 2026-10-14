@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -98,6 +96,7 @@ func (a *App) rootCmd() *cobra.Command {
 		a.newReportCmd(),
 		a.newPermissionsCmd(),
 		a.newDataCmd(),
+		a.newTUICmd(),
 	)
 	return root
 }
@@ -360,26 +359,7 @@ func (a *App) runOrphans(ctx context.Context, cmd *cobra.Command) error {
 }
 
 func (a *App) installedBundleIDs(ctx context.Context) (map[string]struct{}, bool) {
-	set := map[string]struct{}{}
-	complete := true
-	list, err := apps.New(a.Store, a.Home).List(ctx, "")
-	if err != nil {
-		complete = false
-	}
-	for _, app := range list {
-		if app.BundleID != "" {
-			set[app.BundleID] = struct{}{}
-		}
-		if app.Name != "" {
-			set[app.Name] = struct{}{}
-		}
-	}
-	for _, dir := range []string{filepath.Join(a.Home, "Applications"), "/Applications"} {
-		if _, err := os.ReadDir(dir); err != nil {
-			complete = false
-		}
-	}
-	return set, complete
+	return apps.New(a.Store, a.Home).InstalledBundleIDs(ctx)
 }
 
 // --- large -------------------------------------------------------------
