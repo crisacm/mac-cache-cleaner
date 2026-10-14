@@ -195,6 +195,7 @@ type walker struct {
 	skipped      []string
 	partial      bool
 	rootDev      map[string]uint64
+	emitted      int64
 	err          error
 }
 
@@ -268,6 +269,7 @@ func (w *walker) tryReuse(task dirTask) bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.addSubtreeTotals(sub)
+	w.emitted += sub.Totals.Entries
 	if parent := w.dirs[filepath.Dir(task.path)]; parent != nil {
 		parent.subAlloc += sub.Totals.AllocatedBytes
 		parent.subLogic += sub.Totals.LogicalBytes
@@ -492,6 +494,7 @@ func (w *walker) addSubtreeTotals(sub domain.SubtreeTotals) {
 
 func (w *walker) emitLocked(e domain.Entry) {
 	w.batch = append(w.batch, e)
+	w.emitted++
 	if len(w.batch) >= w.batchSize {
 		if err := w.flushLocked(); err != nil {
 			w.err = err
@@ -594,6 +597,7 @@ func (w *walker) result(roots []string) Result {
 		})
 	}
 	w.batch = append(w.batch, dirEntries...)
+	w.emitted += int64(len(dirEntries))
 	_ = w.flushLocked()
 	entries := w.entries
 	inaccessible := w.inaccessible
@@ -601,9 +605,10 @@ func (w *walker) result(roots []string) Result {
 	partial := w.partial
 	byClass := w.byClass
 	byKind := w.byKind
+	emitted := w.emitted
 	w.mu.Unlock()
 
-	total.Entries = int64(len(entries))
+	total.Entries = emitted
 	for _, root := range roots {
 		if agg := w.dirs[root]; agg != nil {
 			total.AllocatedBytes += agg.subAlloc

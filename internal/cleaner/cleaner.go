@@ -107,8 +107,8 @@ type PlanOptions struct {
 
 // PlanResult is the outcome of planning.
 type PlanResult struct {
-	Plan    domain.Plan
-	Skipped []Outcome
+	Plan    domain.Plan `json:"plan"`
+	Skipped []Outcome   `json:"skipped,omitempty"`
 }
 
 // Outcome records what happened to a single item.

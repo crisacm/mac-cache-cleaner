@@ -1,0 +1,18 @@
+ROOT                                   TIER  DECISION  REASON
+~/Library/Developer/Xcode/DerivedData  0     allow     
+~/Library/Saved Application State      0     allow     
+~/Library/Application Support          0     allow     
+~/Library/Group Containers             0     allow     
+~/Library/HTTPStorages                 0     allow     
+~/Library/Containers                   0     allow     
+~/Library/pnpm/store                   0     allow     
+~/Library/Caches                       0     allow     
+~/Library/WebKit                       0     allow     
+~/.gradle/caches                       0     allow     
+~/Applications                         0     allow     
+~/Library/Logs                         0     allow     
+~/.android/avd                         0     allow     
+~/.cache/pnpm                          0     allow     
+~/go/pkg/mod                           0     allow     
+~/.npm                                 0     allow     
+/Applications                          0     allow     

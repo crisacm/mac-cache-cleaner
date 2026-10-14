@@ -12,10 +12,10 @@ import (
 // CreatePlan persists an immutable plan and its items in one transaction.
 func (s *Store) CreatePlan(ctx context.Context, p domain.Plan) error {
 	return s.withTx(ctx, func(tx *sql.Tx) error {
-		const q = `INSERT INTO plans (plan_id, hash, created_at, expires_at, status)
-		           VALUES (?, ?, ?, ?, ?)`
+		const q = `INSERT INTO plans (plan_id, hash, created_at, expires_at, status, total_size)
+		           VALUES (?, ?, ?, ?, ?, ?)`
 		if _, err := tx.ExecContext(ctx, q, p.PlanID, p.Hash,
-			formatTime(p.CreatedAt), formatTime(p.ExpiresAt), string(p.Status)); err != nil {
+			formatTime(p.CreatedAt), formatTime(p.ExpiresAt), string(p.Status), p.TotalSize); err != nil {
 			return fmt.Errorf("store: create plan: %w", err)
 		}
 		const qi = `INSERT INTO plan_items (plan_id, entry_id, path, dev, inode, size, mtime, data_class)
@@ -38,14 +38,14 @@ func (s *Store) CreatePlan(ctx context.Context, p domain.Plan) error {
 
 // GetPlan returns a plan (without items) by ID.
 func (s *Store) GetPlan(ctx context.Context, planID string) (domain.Plan, error) {
-	const q = `SELECT plan_id, hash, created_at, expires_at, status FROM plans WHERE plan_id = ?`
+	const q = `SELECT plan_id, hash, created_at, expires_at, status, total_size FROM plans WHERE plan_id = ?`
 	var (
 		p       domain.Plan
 		created string
 		expires string
 		status  string
 	)
-	err := s.db.QueryRowContext(ctx, q, planID).Scan(&p.PlanID, &p.Hash, &created, &expires, &status)
+	err := s.db.QueryRowContext(ctx, q, planID).Scan(&p.PlanID, &p.Hash, &created, &expires, &status, &p.TotalSize)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Plan{}, fmt.Errorf("store: plan %s: %w", planID, domain.ErrNotFound)
 	}
@@ -105,7 +105,7 @@ func (s *Store) UpdatePlanStatus(ctx context.Context, planID string, status doma
 
 // ListPlans returns plans ordered by creation time (newest first).
 func (s *Store) ListPlans(ctx context.Context) ([]domain.Plan, error) {
-	const q = `SELECT plan_id, hash, created_at, expires_at, status
+	const q = `SELECT plan_id, hash, created_at, expires_at, status, total_size
 	           FROM plans ORDER BY created_at DESC`
 	rows, err := s.db.QueryContext(ctx, q)
 	if err != nil {
@@ -121,7 +121,7 @@ func (s *Store) ListPlans(ctx context.Context) ([]domain.Plan, error) {
 			expires string
 			status  string
 		)
-		if err := rows.Scan(&p.PlanID, &p.Hash, &created, &expires, &status); err != nil {
+		if err := rows.Scan(&p.PlanID, &p.Hash, &created, &expires, &status, &p.TotalSize); err != nil {
 			return nil, fmt.Errorf("store: scan plan row: %w", err)
 		}
 		p.CreatedAt = parseTime(created)

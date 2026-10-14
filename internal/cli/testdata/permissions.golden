@@ -1,0 +1,49 @@
+Data directory: ~/Library/Application Support/mcc
+
+Tier table (compiled in; config cannot loosen it):
+TIER  PREFIX                                        NOTE
+2     ~/Library/Application Support/Microsoft Edge  browser profile/credentials
+2     ~/Library/Application Support/Google/Chrome   browser profile/credentials
+2     ~/Library/Application Support/BraveSoftware   browser profile/credentials
+2     ~/Library/Application Support/1Password       password manager
+2     ~/Library/Application Support/Bitwarden       password manager
+2     ~/Library/Application Support/Firefox         browser profile/credentials
+0     ~/Library/Developer/Xcode/DerivedData         Xcode DerivedData
+0     ~/Library/Saved Application State             saved app state
+0     ~/Library/Application Support                 app data
+2     ~/Library/Mobile Documents                    iCloud
+0     ~/Library/Group Containers                    group containers
+0     ~/Library/HTTPStorages                        HTTP storages
+0     ~/Library/Containers                          sandbox containers
+0     ~/Library/pnpm/store                          pnpm store
+2     ~/Library/Keychains                           keychain
+2     ~/Library/Messages                            Messages
+2     ~/Library/Cookies                             browser cookies
+2     ~/Library/Safari                              Safari data
+0     ~/Library/Caches                              caches
+0     ~/Library/WebKit                              WebKit data
+0     ~/.gradle/caches                              Gradle caches
+2     ~/Library/Mail                                Mail
+0     ~/Applications                                user applications
+0     ~/Library/Logs                                logs
+0     ~/.android/avd                                Android AVD
+0     ~/.cache/pnpm                                 pnpm store
+0     ~/go/pkg/mod                                  Go module cache
+1     ~/Documents                                   user documents
+1     ~/Downloads                                   user downloads
+1     ~/Pictures                                    user pictures
+1     ~/Desktop                                     user desktop
+2     ~/.gnupg                                      GnuPG
+1     ~/Movies                                      user movies
+1     ~/Public                                      user public
+2     ~/.kube                                       Kubernetes config
+1     ~/Music                                       user music
+2     ~/.ssh                                        SSH keys
+2     ~/.aws                                        AWS credentials
+0     ~/.npm                                        npm cache
+0     /Applications                                 system applications
+3     /Volumes                                      external volumes, network, Time Machine
+3     /Network                                      network mounts
+
+Consents:
+  (none)

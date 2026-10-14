@@ -57,7 +57,7 @@ var regenerableMarkers = []string{
 // isRegenerable reports whether path lies under a regenerable cache location.
 func isRegenerable(path string) bool {
 	for _, m := range regenerableMarkers {
-		if path == m || strings.HasPrefix(path, m+"/") || strings.Contains(path, m+"/") {
+		if path == m || strings.HasSuffix(path, m) || strings.HasPrefix(path, m+"/") || strings.Contains(path, m+"/") {
 			return true
 		}
 	}

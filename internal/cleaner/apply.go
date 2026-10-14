@@ -167,7 +167,10 @@ func (s *Service) revalidate(item domain.PlanItem) error {
 		if si.Dev != item.Dev || si.Inode != item.Inode {
 			return errors.New("identity changed (dev/inode)")
 		}
-		if si.AllocatedBytes != item.Size {
+		// Size is compared for files only: a directory entry carries its
+		// subtree size, which lstat cannot reproduce. Directory content
+		// changes are caught by the mtime check below.
+		if !fi.IsDir() && si.AllocatedBytes != item.Size {
 			return errors.New("size changed")
 		}
 	}

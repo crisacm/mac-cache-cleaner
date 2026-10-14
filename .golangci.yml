@@ -17,6 +17,13 @@ linters:
     - staticcheck
 
   settings:
+    errcheck:
+      # Writes to the CLI's output streams are best-effort; their errors are
+      # not actionable (the process is about to exit).
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
     depguard:
       rules:
         # SEC-COD-07: network packages are forbidden outside an approved
