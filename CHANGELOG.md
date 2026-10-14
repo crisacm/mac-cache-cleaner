@@ -52,6 +52,14 @@ y este proyecto se adhiere a [Versionado Semántico](https://semver.org/lang/es/
   con confianza `high` (ID completo), `medium` (prefijo de equipo) o `low`
   (solo nombre); excluye `com.apple.*` y Nivel 2 y **degrada** la confianza si
   alguna ubicación de apps no es accesible.
+- **Cleaner** (`internal/cleaner`): flujo plan -> aplicar. El plan es inmutable
+  con ID, *hash* y vencimiento (por defecto 1 h); `apply` exige confirmación
+  interactiva con cantidad y tamaño total, revalida cada ítem (ruta permitida,
+  no symlink, mismo `(dev, inode)`, tamaño y `mtime`), omite cachés de apps en
+  ejecución, mueve a la Papelera por defecto (rename a `~/.Trash`, con respaldo
+  vía `osascript`/Finder y argv explícitos), admite borrado permanente solo con
+  bandera + confirmación extra, y escribe el registro de auditoría.
+
 
 
 
