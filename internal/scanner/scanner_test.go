@@ -210,3 +210,37 @@ func TestScanRequiresScanID(t *testing.T) {
 	_, err := s.Scan(context.Background(), Options{Roots: []string{t.TempDir()}})
 	require.ErrorIs(t, err, domain.ErrUsage)
 }
+
+func TestScanReportsProgress(t *testing.T) {
+	home := buildFixture(t)
+	var snaps []Progress
+	s := New(fakePolicy{})
+	_, err := s.Scan(context.Background(), Options{
+		ScanID:        "scan-1",
+		Roots:         []string{home},
+		Workers:       2,
+		ProgressEvery: 1, // report on every directory
+		Progress:      func(p Progress) { snaps = append(snaps, p) },
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, snaps, "progress must be reported")
+
+	// The final snapshot is emitted unconditionally and reflects the run.
+	last := snaps[len(snaps)-1]
+	require.Equal(t, 1, last.Roots)
+	require.Greater(t, last.Directories, int64(0))
+	require.Greater(t, last.Entries, int64(0))
+	require.Greater(t, last.AllocatedBytes, int64(0))
+
+	// Directory count is monotonic across snapshots.
+	for i := 1; i < len(snaps); i++ {
+		require.GreaterOrEqual(t, snaps[i].Directories, snaps[i-1].Directories)
+	}
+}
+
+func TestScanNoProgressCallbackIsSafe(t *testing.T) {
+	home := buildFixture(t)
+	s := New(fakePolicy{})
+	_, err := s.Scan(context.Background(), Options{ScanID: "scan-1", Roots: []string{home}, ProgressEvery: 1})
+	require.NoError(t, err)
+}

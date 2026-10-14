@@ -38,6 +38,17 @@ type IncrementalIndex interface {
 	CopySubtree(ctx context.Context, scanID, prefix string) (domain.SubtreeTotals, error)
 }
 
+// Progress is a structured, non-printing snapshot of scan progress. It is
+// delivered to Options.Progress; consumers (TUI, future MCP) decide how to use
+// it.
+type Progress struct {
+	Roots          int    `json:"roots"`
+	Directories    int64  `json:"directories"`
+	Entries        int64  `json:"entries"`
+	AllocatedBytes int64  `json:"allocated_bytes"`
+	Current        string `json:"current,omitempty"`
+}
+
 // Options configures a scan.
 type Options struct {
 	ScanID    string
@@ -47,9 +58,17 @@ type Options struct {
 	BatchSize int
 	// Emit, when set, receives batches of entries as they are produced
 	// (streaming). When nil, entries are collected in Result.Entries.
-	Emit        func(ctx context.Context, entries []domain.Entry) error
-	Incremental IncrementalIndex
+	Emit func(ctx context.Context, entries []domain.Entry) error
+	// Progress, when set, receives throttled progress snapshots.
+	Progress func(Progress)
+	// ProgressEvery is how many directories to process between progress
+	// snapshots. <= 0 uses a default.
+	ProgressEvery int
+	Incremental   IncrementalIndex
 }
+
+// defaultProgressEvery is how often progress is reported by default.
+const defaultProgressEvery = 256
 
 // Result is the structured outcome of a scan.
 type Result struct {
@@ -103,6 +122,10 @@ func (s *Scanner) Scan(ctx context.Context, opts Options) (Result, error) {
 	if batchSize <= 0 {
 		batchSize = 1000
 	}
+	progressEvery := opts.ProgressEvery
+	if progressEvery <= 0 {
+		progressEvery = defaultProgressEvery
+	}
 
 	roots := make([]string, 0, len(opts.Roots))
 	for _, r := range opts.Roots {
@@ -120,18 +143,20 @@ func (s *Scanner) Scan(ctx context.Context, opts Options) (Result, error) {
 	defer cancel()
 
 	w := &walker{
-		s:         s,
-		opts:      opts,
-		ctx:       ctx,
-		cancel:    cancel,
-		queue:     newDirQueue(),
-		workers:   workers,
-		batchSize: batchSize,
-		dirs:      make(map[string]*dirAgg),
-		seenLinks: make(map[[2]uint64]struct{}),
-		byClass:   make(map[domain.DataClass]domain.Totals),
-		byKind:    make(map[domain.Kind]domain.Totals),
-		rootDev:   make(map[string]uint64),
+		s:             s,
+		opts:          opts,
+		ctx:           ctx,
+		cancel:        cancel,
+		queue:         newDirQueue(),
+		workers:       workers,
+		batchSize:     batchSize,
+		dirs:          make(map[string]*dirAgg),
+		seenLinks:     make(map[[2]uint64]struct{}),
+		byClass:       make(map[domain.DataClass]domain.Totals),
+		byKind:        make(map[domain.Kind]domain.Totals),
+		rootDev:       make(map[string]uint64),
+		rootCount:     len(roots),
+		progressEvery: progressEvery,
 	}
 
 	for _, root := range roots {
@@ -150,6 +175,8 @@ func (s *Scanner) Scan(ctx context.Context, opts Options) (Result, error) {
 		}()
 	}
 	wg.Wait()
+
+	w.emitFinalProgress()
 
 	if err := w.failed(); err != nil {
 		return Result{}, err
@@ -176,27 +203,32 @@ type dirAgg struct {
 }
 
 type walker struct {
-	s         *Scanner
-	opts      Options
-	ctx       context.Context
-	cancel    context.CancelFunc
-	queue     *dirQueue
-	workers   int
-	batchSize int
+	s             *Scanner
+	opts          Options
+	ctx           context.Context
+	cancel        context.CancelFunc
+	queue         *dirQueue
+	workers       int
+	batchSize     int
+	progressEvery int
 
-	mu           sync.Mutex
-	batch        []domain.Entry
-	entries      []domain.Entry
-	dirs         map[string]*dirAgg
-	seenLinks    map[[2]uint64]struct{}
-	byClass      map[domain.DataClass]domain.Totals
-	byKind       map[domain.Kind]domain.Totals
-	inaccessible []domain.Inaccessible
-	skipped      []string
-	partial      bool
-	rootDev      map[string]uint64
-	emitted      int64
-	err          error
+	mu            sync.Mutex
+	batch         []domain.Entry
+	entries       []domain.Entry
+	dirs          map[string]*dirAgg
+	seenLinks     map[[2]uint64]struct{}
+	byClass       map[domain.DataClass]domain.Totals
+	byKind        map[domain.Kind]domain.Totals
+	inaccessible  []domain.Inaccessible
+	skipped       []string
+	partial       bool
+	rootDev       map[string]uint64
+	emitted       int64
+	progressAlloc int64
+	directories   int64
+	current       string
+	rootCount     int
+	err           error
 }
 
 func (w *walker) worker() {
@@ -207,10 +239,52 @@ func (w *walker) worker() {
 		}
 		w.processDir(task)
 		w.queue.done()
+		w.reportProgress(task.path)
 		if w.failed() != nil {
 			w.cancel()
 		}
 	}
+}
+
+// reportProgress aggregates counters and invokes the progress callback when
+// it is due. The callback runs outside the walker lock.
+func (w *walker) reportProgress(current string) {
+	if w.opts.Progress == nil {
+		return
+	}
+	w.mu.Lock()
+	w.directories++
+	w.current = current
+	dirs := w.directories
+	due := dirs%int64(w.progressEvery) == 0
+	snap := Progress{
+		Roots:          w.rootCount,
+		Directories:    dirs,
+		Entries:        w.emitted,
+		AllocatedBytes: w.progressAlloc,
+		Current:        w.current,
+	}
+	w.mu.Unlock()
+	if due {
+		w.opts.Progress(snap)
+	}
+}
+
+// emitFinalProgress sends a last snapshot regardless of throttling.
+func (w *walker) emitFinalProgress() {
+	if w.opts.Progress == nil {
+		return
+	}
+	w.mu.Lock()
+	snap := Progress{
+		Roots:          w.rootCount,
+		Directories:    w.directories,
+		Entries:        w.emitted,
+		AllocatedBytes: w.progressAlloc,
+		Current:        w.current,
+	}
+	w.mu.Unlock()
+	w.opts.Progress(snap)
 }
 
 func (w *walker) registerRoot(root string) {
@@ -270,6 +344,7 @@ func (w *walker) tryReuse(task dirTask) bool {
 	defer w.mu.Unlock()
 	w.addSubtreeTotals(sub)
 	w.emitted += sub.Totals.Entries
+	w.progressAlloc += sub.Totals.AllocatedBytes
 	if parent := w.dirs[filepath.Dir(task.path)]; parent != nil {
 		parent.subAlloc += sub.Totals.AllocatedBytes
 		parent.subLogic += sub.Totals.LogicalBytes
@@ -462,6 +537,7 @@ func (w *walker) sumOpaque(root string) (alloc, logical int64, err error) {
 }
 
 func (w *walker) addLeafTotals(class domain.DataClass, kind domain.Kind, alloc, logical int64) {
+	w.progressAlloc += alloc
 	t := w.byClass[class]
 	t.Entries++
 	t.AllocatedBytes += alloc
