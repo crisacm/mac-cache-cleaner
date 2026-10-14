@@ -343,3 +343,11 @@ func TestCleanupFlowEndToEnd(t *testing.T) {
 	require.Len(t, m.clean.result.Applied, 1, "the planned cache must be applied")
 	require.Empty(t, m.clean.result.Failed)
 }
+
+func TestQuitKeySetsQuitting(t *testing.T) {
+	m, _ := testDeps(t)
+	_, cmd := m.Update(keyMsg("q"))
+	require.True(t, m.quitting, "q must request quit")
+	require.NotNil(t, cmd, "q must return a command (tea.Quit)")
+	require.Empty(t, m.View(), "a quitting model renders nothing")
+}

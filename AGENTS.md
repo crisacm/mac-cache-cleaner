@@ -45,14 +45,17 @@ internal/
   domain/              # pure types: App, CacheEntry, Orphan, LargeItem, Plan, ScanResult
   policy/              # tiers, allowlist/denylist, consent: the ONLY place that decides access
   scanner/             # concurrent walker + size computation
+  scan/                # scan orchestration service (validate roots, persist, rollback)
   apps/                # app discovery + Info.plist parsing
   cache/               # data-driven registry of cache locations/rules
   orphan/              # orphan detection + confidence scoring
   large/               # large file/dir detection
   store/               # SQLite repository + migrations
   cleaner/             # plan (dry-run) -> apply -> Trash
+  consent/             # per-root consent service (interactive-only granting)
   platform/            # interfaces + darwin implementation (build tags)
   config/              # viper -> typed struct
+  render/              # presentation helpers shared by cli and tui (sanitize, sizes)
   cli/                 # cobra commands (thin)
   tui/                 # bubbletea models (phase 2)
 migrations/            # SQL files (embedded)
@@ -64,7 +67,8 @@ testdata/              # fake ~/Library fixtures
 - `cli`/`tui` -> services -> `domain`. `domain` imports nothing from this repo.
 - `store`, `platform`, `cleaner` are consumed via interfaces **defined in the consumer package**.
 - **All access decisions go through `internal/policy`.** No other package decides what may be read, scanned or deleted.
-- `cli`/`tui` contain **no business logic**: parse input, call a service, render output.
+- `cli`/`tui` contain **no business logic**: parse input, call a service, render output. The TUI must not duplicate policy or service logic (it calls `scan`, `cleaner`, `consent` and the list services).
+- `render` holds presentation helpers (sanitize, sizes, redaction) shared by `cli` and `tui` so sanitization has one implementation.
 - Nothing outside `cmd/` constructs concrete dependencies.
 
 ### MCP-readiness (required now, so Phase 3 is additive)

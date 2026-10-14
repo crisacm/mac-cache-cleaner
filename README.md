@@ -4,14 +4,14 @@ Herramienta de línea de comandos escrita en Go para **indexar y consultar el es
 
 A futuro, las mismas capacidades se expondrán como un **servidor MCP** para que agentes de IA puedan escanear el sistema, conocer el peso de cachés, apps y ubicaciones, y proponer qué eliminar (siempre con aprobación humana).
 
-> Estado: **Fase 1 (CLI) implementada**. La TUI (fase 2) y el servidor MCP (fase 3) todavía no.
+> Estado: **Fases 1 y 2 implementadas** (CLI y TUI). El servidor MCP (fase 3) todavía no.
 
 ## Roadmap
 
 | Fase | Entregable | Estado |
 |---|---|---|
 | 1 | CLI: `scan`, `apps`, `cache`, `orphans`, `large`, `clean`, `report`, `permissions`, `data` | Implementado |
-| 2 | TUI interactiva (`mcc tui`) | Pendiente |
+| 2 | TUI interactiva (`mcc tui`) | Implementado |
 | 3 | **Servidor MCP** (stdio): herramientas de solo lectura y de planificación para agentes | Futuro (el código se diseña desde ya para soportarlo) |
 
 Fuera de alcance: demonios en segundo plano, borrado automático, telemetría, servicios de red, elevación de privilegios, lectura del contenido de archivos y otros sistemas operativos.
@@ -58,6 +58,18 @@ mcc tui                                       # interfaz interactiva (fase 2)
 
 Los comandos de lectura aceptan `--json` y `--no-color`.
 
+### Interfaz interactiva (`mcc tui`)
+
+Requiere una terminal. Reutiliza los mismos servicios que la CLI y **no decide accesos por su cuenta** (todo pasa por `internal/policy`).
+
+- **Overview**: totales, última vez escaneada y aviso de resultado parcial.
+- **Apps / Caches / Orphans / Large**: listas ordenables (`s`) y filtrables (`/`), con clase de dato y, en huérfanos, nivel de confianza.
+- **Scan**: muestra primero las raíces efectivas y su veredicto (incluir / requiere consentimiento / omitida); escanea con progreso y se cancela con `Esc` (el índice parcial se revierte). Los niveles 1 y 3 requieren consentimiento ya registrado; `g` abre la confirmación que **nombra la raíz** y exige escribir `grant`.
+- **Limpieza**: selecciona ítems (`espacio`) → `p` crea el plan (dry-run) → pantalla de revisión (cantidad, tamaño total, avisos "puede contener datos del usuario") → `c` y escribir la **cantidad exacta** para aplicar. Solo Papelera; el borrado permanente no está disponible desde la TUI.
+- **Permissions**: tabla de política efectiva y consentimientos registrados; `x` revoca el seleccionado.
+- Los ítems `user_file` y `application` se muestran pero **no se pueden seleccionar** para un plan.
+- Navegación: `tab`/`shift+tab`, `q` para salir. Los nombres de archivos/apps se sanitizan (ANSI y caracteres de control) al renderizar.
+
 **Códigos de salida:** `0` éxito · `1` error general · `2` uso incorrecto · `3` resultado parcial (rutas inaccesibles) · `4` bloqueado por política / falta consentimiento.
 
 ## Seguridad y privacidad
@@ -86,14 +98,17 @@ internal/
   domain/              # tipos puros: App, CacheEntry, Orphan, LargeItem, Plan, ScanResult
   policy/              # niveles, lista blanca/negra, consentimiento: ÚNICO lugar que decide accesos
   scanner/             # walker concurrente y cálculo de tamaños
+  scan/                # servicio de orquestación de escaneo (validar raíces, persistir, revertir)
   apps/                # descubrimiento de apps y lectura de Info.plist
   cache/               # registro de ubicaciones de caché (basado en datos)
   orphan/              # detección de huérfanos y scoring de confianza
   large/               # detección de archivos/directorios pesados
   store/               # repositorio SQLite y migraciones embebidas
   cleaner/             # plan (dry-run) -> aplicar -> Papelera
+  consent/             # servicio de consentimiento por raíz (solo interactivo)
   platform/            # interfaces + implementación darwin (build tags)
   config/              # viper -> struct tipado
+  render/              # utilidades de presentación compartidas por cli y tui (sanitizar, tamaños)
   cli/                 # comandos cobra (delgados, sin lógica de negocio)
   tui/                 # modelos bubbletea (fase 2)
 migrations/            # SQL embebido
@@ -105,7 +120,8 @@ testdata/              # fixtures de un ~/Library falso
 - `cli`/`tui` -> servicios -> `domain`; `domain` no importa nada del resto.
 - `store`, `platform` y `cleaner` se consumen mediante interfaces definidas **en el paquete consumidor**.
 - **Toda decisión de acceso pasa por `internal/policy`.**
-- La lógica de negocio nunca vive en `cli/`, `tui/` ni `main.go`.
+- `render` concentra las utilidades de presentación (sanitizar, tamaños, `--redact`) para que `cli` y `tui` compartan una única implementación.
+- La lógica de negocio nunca vive en `cli/`, `tui/` ni `main.go`; la TUI no duplica política ni lógica de servicios.
 
 ### Preparado para MCP (fase 3)
 

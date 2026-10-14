@@ -117,6 +117,31 @@ func dataPaths(home, bundleID string) []string {
 	}
 }
 
+// InstalledBundleIDs returns the bundle IDs and display names of installed
+// applications, plus whether discovery was complete (every application root
+// was readable). It is used by orphan detection (SEC-ORP-02).
+func (s *Service) InstalledBundleIDs(_ context.Context) (map[string]struct{}, bool) {
+	set := map[string]struct{}{}
+	complete := true
+	for _, root := range s.roots {
+		des, err := os.ReadDir(root)
+		if err != nil {
+			complete = false
+			continue
+		}
+		for _, de := range des {
+			if !de.IsDir() || !strings.HasSuffix(strings.ToLower(de.Name()), ".app") {
+				continue
+			}
+			set[strings.TrimSuffix(de.Name(), ".app")] = struct{}{}
+			if info, err := ReadBundleInfo(filepath.Join(root, de.Name())); err == nil && info.BundleID != "" {
+				set[info.BundleID] = struct{}{}
+			}
+		}
+	}
+	return set, complete
+}
+
 // BundleInfo is the subset of Info.plist MCC reads.
 type BundleInfo struct {
 	BundleID string

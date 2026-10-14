@@ -68,6 +68,29 @@ y este proyecto se adhiere a [Versionado Semántico](https://semver.org/lang/es/
   control y ANSI; códigos de salida 0/1/2/3/4 (3 = resultado parcial). Incluye
   configuración con viper (`~/.config/mcc/config.yaml`, claves cerradas, sin
   perillas de política) y *golden files* en `internal/cli/testdata/`.
+- **Render** (`internal/render`): utilidades de presentación compartidas
+  (`Sanitize`, `FormatBytes`, `Redact`) extraídas de `cli` para que la TUI use
+  una única implementación del saneado (`SEC-COD-02`).
+- **Progreso del scanner**: `scanner.Options.Progress` con instantáneas
+  estructuradas y limitadas (sin imprimir), reutilizables por la TUI y el futuro MCP.
+- **Servicio de escaneo** (`internal/scan`): orquesta un escaneo (valida raíces
+  por política, persiste, vuelca entradas, registra inaccesibles y finaliza);
+  **revierte** el escaneo en curso ante error o cancelación (`store.DeleteScan`,
+  borrado en cascada) para que el último escaneo completo siga siendo el vigente.
+- **Servicio de consentimiento** (`internal/consent`): `List`, `Verdict`,
+  `Grant` y `Revoke`; `Grant` se rechaza sin TTY, para nivel 2/desconocido, e
+  informa `ErrNotNeeded` para raíces por defecto (`SEC-ACC-07`).
+- **TUI** (`internal/tui`, `mcc tui`): interfaz interactiva (Bubble Tea +
+  Lipgloss + Bubbles) que reutiliza los servicios y no contiene lógica de
+  negocio. Pantallas: Overview (totales, última vez, aviso parcial),
+  Apps/Caches/Orphans/Large (orden y filtro, clase de dato, confianza),
+  Scan (raíces efectivas con veredicto, progreso, cancelación con `Esc`),
+  limpieza (selección -> revisión del plan -> escribir la **cantidad exacta**
+  -> aplicar; solo Papelera) y Permissions (política efectiva y revocación de
+  consentimientos). Los ítems `user_file`/`application` son de solo reporte;
+  los nombres se sanitizan; el consentimiento exige confirmación que nombra la
+  raíz y escribir `grant`. Incluye pruebas dirigidas por mensajes y vistas
+  *golden* (`internal/tui/testdata/`).
 
 ### Notas / decisiones
 
@@ -77,18 +100,22 @@ y este proyecto se adhiere a [Versionado Semántico](https://semver.org/lang/es/
   ejecución. Los datos de app (`app_data`) requieren selección explícita con
   `--entry` (advertencia "puede contener datos del usuario").
 - La confirmación de `clean --apply` exige la palabra exacta `yes` (no basta
-  Enter); el borrado permanente exige además `DELETE`. El consentimiento de
-  Nivel 1/3 solo se concede de forma interactiva en un TTY (`mcc permissions
-  grant <root>`).
+  Enter); el borrado permanente exige además `DELETE`. En la TUI la
+  confirmación exige escribir la **cantidad exacta de ítems**. El consentimiento
+  de Nivel 1/3 solo se concede de forma interactiva en un TTY (`mcc permissions
+  grant <root>` o `g` en la pantalla Scan).
 - En la revalidación de `apply`, el tamaño se compara **solo en archivos**: las
   entradas de directorio llevan el tamaño de subárbol, así que un directorio se
   revalida por `mtime` + `(dev, inode)`.
-- Los `fixtures` se generan en `t.TempDir()`; los *golden files* del CLI viven
-  en `internal/cli/testdata/`.
+- Al **cancelar un escaneo** (TUI, `Esc`), el escaneo en curso se elimina en
+  cascada, de modo que el escaneo completo anterior sigue siendo el vigente.
+- Los `fixtures` se generan en `t.TempDir()`; los *golden files* viven en
+  `internal/cli/testdata/` y `internal/tui/testdata/`.
 - Respecto al esquema del `README.md`, el índice añade `dev`/`inode` a `entries`
   (necesarios para deduplicar hardlinks y revalidar en `apply`), estado
   (`finished_at`, `full`, `partial`) a `scans`, la tabla `inaccessible` para
   resultados parciales (`SEC-ACC-05`) y `total_size` a `plans`.
 - El proyecto no hace ninguna llamada de red; `depguard` lo hace cumplir
   (`SEC-COD-07`).
+
 
