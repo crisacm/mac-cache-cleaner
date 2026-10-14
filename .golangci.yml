@@ -1,0 +1,45 @@
+# golangci-lint configuration for MCC (Mac Cache Cleaner).
+# Schema: golangci-lint v2. See AGENTS.md §2 / SECURITY.md SEC-COD-07.
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: none
+  enable:
+    - depguard
+    - errcheck
+    - gosec
+    - govet
+    - revive
+    - staticcheck
+
+  settings:
+    depguard:
+      rules:
+        # SEC-COD-07: network packages are forbidden outside an approved
+        # optional package. MCC makes no network calls by default.
+        no-network:
+          files:
+            - "$all"
+          deny:
+            - pkg: net
+              desc: "SEC-COD-07: network packages are forbidden outside an approved optional package"
+            - pkg: net/http
+              desc: "SEC-COD-07: network packages are forbidden outside an approved optional package"
+            - pkg: net/http/httptest
+              desc: "SEC-COD-07: network packages are forbidden outside an approved optional package"
+            - pkg: net/rpc
+              desc: "SEC-COD-07: network packages are forbidden outside an approved optional package"
+            - pkg: net/smtp
+              desc: "SEC-COD-07: network packages are forbidden outside an approved optional package"
+            - pkg: net/url
+              desc: "SEC-COD-07: network/URL parsing is not used by MCC"
+            - pkg: net/mail
+              desc: "SEC-COD-07: network packages are forbidden outside an approved optional package"
+            - pkg: net/textproto
+              desc: "SEC-COD-07: network packages are forbidden outside an approved optional package"
+            - pkg: golang.org/x/net
+              desc: "SEC-COD-07: network packages are forbidden outside an approved optional package"
