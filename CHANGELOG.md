@@ -48,6 +48,11 @@ y este proyecto se adhiere a [Versionado Semántico](https://semver.org/lang/es/
 - **Large** (`internal/large`): detección de archivos/directorios pesados con
   umbral por defecto de 1 GiB, top-N acotado con *min-heap* y resultados de
   Nivel 1 solo para reportar (`user_file`).
+- **Orphan** (`internal/orphan`): detección de datos huérfanos en `~/Library`
+  con confianza `high` (ID completo), `medium` (prefijo de equipo) o `low`
+  (solo nombre); excluye `com.apple.*` y Nivel 2 y **degrada** la confianza si
+  alguna ubicación de apps no es accesible.
+
 
 
 
