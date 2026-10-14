@@ -225,3 +225,78 @@ func TestPurgeClearsData(t *testing.T) {
 	require.Zero(t, info.Consents)
 	require.Zero(t, info.Audit)
 }
+
+func TestIncrementalCopySubtree(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t)
+	mt := time.Now().UTC().Truncate(time.Second)
+
+	require.NoError(t, s.SaveScan(ctx, domain.Scan{ID: "s1", StartedAt: mt, Root: "/root"}))
+	entries := []domain.Entry{
+		{
+			EntryID: domain.ComputeEntryID("s1", "/root/Library/Caches"), ScanID: "s1",
+			Path: "/root/Library/Caches", Parent: "/root/Library", IsDir: true,
+			Kind: domain.KindDir, DataClass: domain.ClassRegenerableCache,
+			MTime: mt, AllocatedBytes: 100, LogicalBytes: 100,
+		},
+		{
+			EntryID: domain.ComputeEntryID("s1", "/root/Library/Caches/a"), ScanID: "s1",
+			Path: "/root/Library/Caches/a", Parent: "/root/Library/Caches",
+			Kind: domain.KindFile, DataClass: domain.ClassRegenerableCache,
+			AllocatedBytes: 60, LogicalBytes: 60,
+		},
+		{
+			EntryID: domain.ComputeEntryID("s1", "/root/Library/Caches/b"), ScanID: "s1",
+			Path: "/root/Library/Caches/b", Parent: "/root/Library/Caches",
+			Kind: domain.KindFile, DataClass: domain.ClassRegenerableCache,
+			AllocatedBytes: 40, LogicalBytes: 40,
+		},
+	}
+	require.NoError(t, s.InsertEntries(ctx, entries))
+
+	prev, ok, err := s.LatestScanID(ctx)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, "s1", prev)
+
+	got, ok, err := s.DirMTime(ctx, "s1", "/root/Library/Caches")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, mt, got)
+
+	_, ok, err = s.DirMTime(ctx, "s1", "/root/nope")
+	require.NoError(t, err)
+	require.False(t, ok)
+
+	require.NoError(t, s.SaveScan(ctx, domain.Scan{ID: "s2", StartedAt: mt.Add(time.Minute), Root: "/root"}))
+
+	sub, err := s.CopySubtree(ctx, "s1", "s2", "/root/Library/Caches")
+	require.NoError(t, err)
+	require.EqualValues(t, 100, sub.Totals.AllocatedBytes)
+	require.EqualValues(t, 3, sub.Totals.Entries)
+	require.EqualValues(t, 2, sub.ByClass[domain.ClassRegenerableCache].Entries)
+	require.EqualValues(t, 100, sub.ByClass[domain.ClassRegenerableCache].AllocatedBytes)
+
+	copied, err := s.EntriesByKind(ctx, "s2", domain.KindFile)
+	require.NoError(t, err)
+	require.Len(t, copied, 2)
+	require.NotEqual(t, entries[1].EntryID, copied[0].EntryID, "entry IDs must be re-derived for the new scan")
+}
+
+func TestIncrementalAdapter(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t)
+	require.NoError(t, s.SaveScan(ctx, domain.Scan{ID: "s1", StartedAt: time.Now(), Root: "/root"}))
+	require.NoError(t, s.InsertEntries(ctx, []domain.Entry{{
+		EntryID: domain.ComputeEntryID("s1", "/root/c"), ScanID: "s1", Path: "/root/c",
+		IsDir: true, Kind: domain.KindDir, DataClass: domain.ClassRegenerableCache, MTime: time.Now(),
+	}}))
+	require.NoError(t, s.SaveScan(ctx, domain.Scan{ID: "s2", StartedAt: time.Now().Add(time.Second), Root: "/root"}))
+
+	inc := s.NewIncremental("s1", "s2")
+	_, ok, err := inc.SubtreeMTime(ctx, "/root/c")
+	require.NoError(t, err)
+	require.True(t, ok)
+	_, err = inc.CopySubtree(ctx, "s2", "/root/c")
+	require.NoError(t, err)
+}

@@ -111,3 +111,11 @@ type LargeItem struct {
 	LogicalBytes   int64     `json:"logical_bytes"`
 	EntryID        string    `json:"entry_id"`
 }
+
+// SubtreeTotals aggregates the sizes of a subtree. It is returned when an
+// unchanged subtree is reused during an incremental scan.
+type SubtreeTotals struct {
+	Totals  Totals               `json:"totals"`
+	ByClass map[DataClass]Totals `json:"by_class,omitempty"`
+	ByKind  map[Kind]Totals      `json:"by_kind,omitempty"`
+}

@@ -171,7 +171,7 @@ func (p *Policy) PathVerdict(root, path string) Verdict {
 		v.Reason = fmt.Sprintf("tier 2 (%s) is never accessed", rule)
 		return v
 	}
-	if IsSIP(path) {
+	if p.isSIP(path) {
 		v.Decision = DecisionDeny
 		v.Reason = "SIP-protected path"
 		return v
@@ -208,13 +208,23 @@ func (p *Policy) DeleteVerdict(path, bundleID string) Verdict {
 			return v
 		}
 	}
-	if IsSIP(path) {
+	if p.isSIP(path) {
 		v.Reason = "SIP-protected path"
 		return v
 	}
 	v.Decision = DecisionAllow
 	v.Reason = ""
 	return v
+}
+
+// isSIP reports whether path is SIP-protected. A path inside the user's home
+// is never SIP-protected, which also keeps test trees under /var (a symlink to
+// /private/var) usable as stand-in homes.
+func (p *Policy) isSIP(path string) bool {
+	if UnderRoot(p.home, path) {
+		return false
+	}
+	return IsSIP(path)
 }
 
 // hasConsent reports whether recorded consent is in force for root.

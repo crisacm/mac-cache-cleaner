@@ -31,6 +31,15 @@ y este proyecto se adhiere a [Versionado Semántico](https://semver.org/lang/es/
   negativa a ejecutar como root (`euid == 0`) y verificaciones de borrado (nivel
   allowlisted, SIP, `com.apple.*`, niveles 2/3). Incluye las pruebas de
   seguridad de `SECURITY.md` §10.
+- **Scanner** (`internal/scanner`): recorrido concurrente con *worker pool*
+  acotado (cola sin *deadlocks*), tamaño real `st_blocks*512` junto al lógico,
+  deduplicación de hardlinks por `(dev, inode)`, sin seguir symlinks, sin cruzar
+  dispositivos, paquetes de biblioteca como ítem opaco, `EPERM`/`EACCES` como
+  resultado parcial y escaneo incremental por `mtime` de directorios. La
+  persistencia incremental vive en `store` (`NewIncremental`, `CopySubtree`).
+- **Platform** (`internal/platform`): capa `stat` con build tags (`darwin` y
+  stub para el resto).
+
 
 
 ### Notas
