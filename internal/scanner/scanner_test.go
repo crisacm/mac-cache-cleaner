@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -243,4 +244,48 @@ func TestScanNoProgressCallbackIsSafe(t *testing.T) {
 	s := New(fakePolicy{})
 	_, err := s.Scan(context.Background(), Options{ScanID: "scan-1", Roots: []string{home}, ProgressEvery: 1})
 	require.NoError(t, err)
+}
+
+// stubIncremental reports every directory as unchanged and returns a canned
+// subtree, exercising the incremental path without a store.
+type stubIncremental struct {
+	mtime time.Time
+	sub   domain.SubtreeTotals
+	calls int
+}
+
+func (s *stubIncremental) SubtreeMTime(context.Context, string) (time.Time, bool, error) {
+	return s.mtime, true, nil
+}
+
+func (s *stubIncremental) CopySubtree(_ context.Context, _, _ string) (domain.SubtreeTotals, error) {
+	s.calls++
+	sub := s.sub
+	sub.ByClass = map[domain.DataClass]domain.Totals{}
+	sub.ByKind = map[domain.Kind]domain.Totals{}
+	return sub, nil
+}
+
+func TestIncrementalReuseDoesNotDoubleCount(t *testing.T) {
+	home := buildFixture(t)
+	caches := filepath.Join(home, "Library", "Caches")
+	fi, err := os.Stat(caches)
+	require.NoError(t, err)
+
+	inc := &stubIncremental{
+		mtime: fi.ModTime(),
+		sub:   domain.SubtreeTotals{Totals: domain.Totals{Entries: 5, AllocatedBytes: 1234, LogicalBytes: 1234}},
+	}
+	s := New(fakePolicy{})
+	res, err := s.Scan(context.Background(), Options{
+		ScanID:      "scan-1",
+		Roots:       []string{caches},
+		Incremental: inc,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, inc.calls, "the unchanged root must be reused once")
+	require.EqualValues(t, 5, res.Totals.Entries, "reused entries counted exactly once")
+	for _, e := range res.Entries {
+		require.NotEqual(t, caches, e.Path, "a reused directory must not be re-emitted")
+	}
 }

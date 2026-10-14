@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -22,6 +21,7 @@ import (
 	"github.com/crisacm/mac-cache-cleaner/internal/orphan"
 	"github.com/crisacm/mac-cache-cleaner/internal/policy"
 	"github.com/crisacm/mac-cache-cleaner/internal/render"
+	"github.com/crisacm/mac-cache-cleaner/internal/scan"
 	"github.com/crisacm/mac-cache-cleaner/internal/scanner"
 	"github.com/crisacm/mac-cache-cleaner/internal/store"
 )
@@ -152,65 +152,32 @@ func (a *App) runScan(ctx context.Context, cmd *cobra.Command) error {
 	explain, _ := cmd.Flags().GetBool("explain")
 	asJSON, _ := cmd.Flags().GetBool("json")
 
-	if len(roots) == 0 {
-		roots = a.Policy.AllowlistRoots()
-	}
-
 	if explain {
+		if len(roots) == 0 {
+			roots = a.Policy.AllowlistRoots()
+		}
 		return a.explainRoots(ctx, roots, asJSON)
 	}
 
-	prevID, hasPrev, err := a.Store.LatestScanID(ctx)
+	svc := scan.New(a.Store, a.Policy)
+	out, err := svc.Run(ctx, scan.Options{Roots: roots, Full: full, Workers: a.Cfg.Workers})
 	if err != nil {
 		return err
 	}
-	scanID, err := domain.NewID()
-	if err != nil {
-		return err
-	}
-	if err := a.Store.SaveScan(ctx, domain.Scan{
-		ID: scanID, StartedAt: time.Now(), Root: roots[0], Roots: roots, Full: full,
-	}); err != nil {
-		return err
-	}
 
-	sc := scanner.New(a.Policy)
-	opts := scanner.Options{
-		ScanID:  scanID,
-		Roots:   roots,
-		Full:    full,
-		Workers: a.Cfg.Workers,
-		Emit: func(ctx context.Context, entries []domain.Entry) error {
-			return a.Store.InsertEntries(ctx, entries)
-		},
-	}
-	if hasPrev && !full {
-		opts.Incremental = a.Store.NewIncremental(prevID, scanID)
-	}
-
-	res, err := sc.Scan(ctx, opts)
-	if err != nil {
-		return err
-	}
-	if err := a.Store.InsertInaccessible(ctx, scanID, res.Inaccessible); err != nil {
-		return err
-	}
-	if err := a.Store.FinishScan(ctx, scanID, time.Now(), res.Partial); err != nil {
-		return err
-	}
-
-	out := scanOutput{
-		ScanID: scanID, Roots: roots,
+	res := out.Result
+	output := scanOutput{
+		ScanID: out.Scan.ID, Roots: out.Scan.Roots,
 		Entries: res.Totals.Entries, Allocated: res.Totals.AllocatedBytes,
 		Logical: res.Totals.LogicalBytes, ByClass: res.ByClass,
 		Inaccessible: res.Inaccessible, Partial: res.Partial,
 	}
 	if asJSON {
-		if err := writeJSON(a.Out, out); err != nil {
+		if err := writeJSON(a.Out, output); err != nil {
 			return err
 		}
 	} else {
-		a.renderScan(res, roots)
+		a.renderScan(res, out.Scan.Roots)
 	}
 	if res.Partial {
 		return domain.ErrPartial

@@ -300,3 +300,28 @@ func TestIncrementalAdapter(t *testing.T) {
 	_, err = inc.CopySubtree(ctx, "s2", "/root/c")
 	require.NoError(t, err)
 }
+
+func TestDeleteScanCascades(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t)
+	require.NoError(t, s.SaveScan(ctx, domain.Scan{ID: "s1", StartedAt: time.Now(), Root: "/root"}))
+	require.NoError(t, s.InsertEntries(ctx, []domain.Entry{{
+		EntryID: "e1", ScanID: "s1", Path: "/root/f", Kind: domain.KindFile,
+		DataClass: domain.ClassRegenerableCache,
+	}}))
+	require.NoError(t, s.InsertInaccessible(ctx, "s1", []domain.Inaccessible{{Path: "/root/x", Reason: "denied"}}))
+
+	require.NoError(t, s.DeleteScan(ctx, "s1"))
+
+	_, err := s.GetScan(ctx, "s1")
+	require.ErrorIs(t, err, domain.ErrNotFound)
+	totals, err := s.Totals(ctx, "s1")
+	require.NoError(t, err)
+	require.Zero(t, totals.Entries, "entries must be removed by cascade")
+	paths, err := s.Paths(ctx, "s1")
+	require.NoError(t, err)
+	require.Empty(t, paths)
+	inc, err := s.Inaccessible(ctx, "s1")
+	require.NoError(t, err)
+	require.Empty(t, inc)
+}

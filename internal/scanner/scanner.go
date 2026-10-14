@@ -349,8 +349,9 @@ func (w *walker) tryReuse(task dirTask) bool {
 		parent.subAlloc += sub.Totals.AllocatedBytes
 		parent.subLogic += sub.Totals.LogicalBytes
 	}
-	w.dirs[task.path].subAlloc = sub.Totals.AllocatedBytes
-	w.dirs[task.path].subLogic = sub.Totals.LogicalBytes
+	// The copied subtree already contains this directory's entry, so drop it
+	// from the roll-up to avoid emitting (and counting) it twice.
+	delete(w.dirs, task.path)
 	return true
 }
 
