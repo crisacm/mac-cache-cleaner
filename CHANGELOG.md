@@ -45,6 +45,10 @@ y este proyecto se adhiere a [Versionado Semántico](https://semver.org/lang/es/
 - **Cache** (`internal/cache`): registro de ubicaciones de caché basado en datos
   (sistema y desarrollo: Gradle, Android, Xcode, npm, pnpm, Go, Homebrew,
   CocoaPods, Yarn, Cargo, Docker) con su clase de dato.
+- **Large** (`internal/large`): detección de archivos/directorios pesados con
+  umbral por defecto de 1 GiB, top-N acotado con *min-heap* y resultados de
+  Nivel 1 solo para reportar (`user_file`).
+
 
 
 
