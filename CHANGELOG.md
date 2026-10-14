@@ -24,6 +24,14 @@ y este proyecto se adhiere a [Versionado Semántico](https://semver.org/lang/es/
   `migrations/`), directorio `0700` y archivo `0600`. Incluye escaneos, entradas,
   rutas inaccesibles, consentimientos, planes e ítems, y registro de auditoría
   de solo-anexado; además `Info` y `Purge` para `mcc data`.
+- **Policy** (`internal/policy`): único lugar que decide accesos. Tabla de
+  niveles 0–3 compilada en el binario, comprobación por **límite de ruta**
+  (`Caches` ≠ `Caches-evil`), rechazo de `..`/NUL/rutas relativas, resolución de
+  symlinks sin escapar de la raíz, consentimiento por raíz para niveles 1 y 3,
+  negativa a ejecutar como root (`euid == 0`) y verificaciones de borrado (nivel
+  allowlisted, SIP, `com.apple.*`, niveles 2/3). Incluye las pruebas de
+  seguridad de `SECURITY.md` §10.
+
 
 ### Notas
 
