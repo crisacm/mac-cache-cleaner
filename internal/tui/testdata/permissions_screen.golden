@@ -1,0 +1,54 @@
+MCC — Mac Cache Cleaner
+ Overview  Apps  Caches  Orphans  Large  Scan  Permissions 
+
+Effective policy (compiled in)
+Configuration can never downgrade a tier (SEC-ACC-03).
+
+  tier 2  ~/Library/Application Support/Microsoft Edge browser profile/credentials
+  tier 2  ~/Library/Application Support/Google/Chrome browser profile/credentials
+  tier 2  ~/Library/Application Support/BraveSoftware browser profile/credentials
+  tier 2  ~/Library/Application Support/1Password    password manager
+  tier 2  ~/Library/Application Support/Bitwarden    password manager
+  tier 2  ~/Library/Application Support/Firefox      browser profile/credentials
+  tier 0  ~/Library/Developer/Xcode/DerivedData      Xcode DerivedData
+  tier 0  ~/Library/Saved Application State          saved app state
+  tier 0  ~/Library/Application Support              app data
+  tier 2  ~/Library/Mobile Documents                 iCloud
+  tier 0  ~/Library/Group Containers                 group containers
+  tier 0  ~/Library/HTTPStorages                     HTTP storages
+  tier 0  ~/Library/Containers                       sandbox containers
+  tier 0  ~/Library/pnpm/store                       pnpm store
+  tier 2  ~/Library/Keychains                        keychain
+  tier 2  ~/Library/Messages                         Messages
+  tier 2  ~/Library/Cookies                          browser cookies
+  tier 2  ~/Library/Safari                           Safari data
+  tier 0  ~/Library/Caches                           caches
+  tier 0  ~/Library/WebKit                           WebKit data
+  tier 0  ~/.gradle/caches                           Gradle caches
+  tier 2  ~/Library/Mail                             Mail
+  tier 0  ~/Applications                             user applications
+  tier 0  ~/Library/Logs                             logs
+  tier 0  ~/.android/avd                             Android AVD
+  tier 0  ~/.cache/pnpm                              pnpm store
+  tier 0  ~/go/pkg/mod                               Go module cache
+  tier 1  ~/Documents                                user documents
+  tier 1  ~/Downloads                                user downloads
+  tier 1  ~/Pictures                                 user pictures
+  tier 1  ~/Desktop                                  user desktop
+  tier 2  ~/.gnupg                                   GnuPG
+  tier 1  ~/Movies                                   user movies
+  tier 1  ~/Public                                   user public
+  tier 2  ~/.kube                                    Kubernetes config
+  tier 1  ~/Music                                    user music
+  tier 2  ~/.ssh                                     SSH keys
+  tier 2  ~/.aws                                     AWS credentials
+  tier 0  ~/.npm                                     npm cache
+  tier 0  /Applications                              system applications
+  tier 3  /Volumes                                   external volumes, network, Time Machine
+  tier 3  /Network                                   network mounts
+
+Recorded consents
+  (none)
+
+large: usage error: scan id is required
+↑/k move up  ↓/j move down  x revoke consent  esc back/cancel  q quit

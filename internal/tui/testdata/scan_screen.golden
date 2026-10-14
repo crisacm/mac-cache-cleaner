@@ -1,0 +1,53 @@
+MCC — Mac Cache Cleaner
+ Overview  Apps  Caches  Orphans  Large  Scan  Permissions 
+
+Effective scan roots
+Tier 2 is never scanned; Tier 1/3 need recorded consent.
+
+> ~/Library/Application Support/Microsoft Edge tier 2  skipped          tier 2 (~/Library/Application Support/Microsoft Edge) is never accessed
+  ~/Library/Application Support/Google/Chrome tier 2  skipped          tier 2 (~/Library/Application Support/Google/Chrome) is never accessed
+  ~/Library/Application Support/BraveSoftware tier 2  skipped          tier 2 (~/Library/Application Support/BraveSoftware) is never accessed
+  ~/Library/Application Support/1Password    tier 2  skipped          tier 2 (~/Library/Application Support/1Password) is never accessed
+  ~/Library/Application Support/Bitwarden    tier 2  skipped          tier 2 (~/Library/Application Support/Bitwarden) is never accessed
+  ~/Library/Application Support/Firefox      tier 2  skipped          tier 2 (~/Library/Application Support/Firefox) is never accessed
+  ~/Library/Developer/Xcode/DerivedData      tier 0  include          
+  ~/Library/Saved Application State          tier 0  include          
+  ~/Library/Application Support              tier 0  include          
+  ~/Library/Mobile Documents                 tier 2  skipped          tier 2 (~/Library/Mobile Documents) is never accessed
+  ~/Library/Group Containers                 tier 0  include          
+  ~/Library/HTTPStorages                     tier 0  include          
+  ~/Library/Containers                       tier 0  include          
+  ~/Library/pnpm/store                       tier 0  include          
+  ~/Library/Keychains                        tier 2  skipped          tier 2 (~/Library/Keychains) is never accessed
+  ~/Library/Messages                         tier 2  skipped          tier 2 (~/Library/Messages) is never accessed
+  ~/Library/Cookies                          tier 2  skipped          tier 2 (~/Library/Cookies) is never accessed
+  ~/Library/Safari                           tier 2  skipped          tier 2 (~/Library/Safari) is never accessed
+  ~/Library/Caches                           tier 0  include          
+  ~/Library/WebKit                           tier 0  include          
+  ~/.gradle/caches                           tier 0  include          
+  ~/Library/Mail                             tier 2  skipped          tier 2 (~/Library/Mail) is never accessed
+  ~/Applications                             tier 0  include          
+  ~/Library/Logs                             tier 0  include          
+  ~/.android/avd                             tier 0  include          
+  ~/.cache/pnpm                              tier 0  include          
+  ~/go/pkg/mod                               tier 0  include          
+  ~/Documents                                tier 1  consent required consent required for this root
+  ~/Downloads                                tier 1  consent required consent required for this root
+  ~/Pictures                                 tier 1  consent required consent required for this root
+  ~/Desktop                                  tier 1  consent required consent required for this root
+  ~/.gnupg                                   tier 2  skipped          tier 2 (~/.gnupg) is never accessed
+  ~/Movies                                   tier 1  consent required consent required for this root
+  ~/Public                                   tier 1  consent required consent required for this root
+  ~/.kube                                    tier 2  skipped          tier 2 (~/.kube) is never accessed
+  ~/Music                                    tier 1  consent required consent required for this root
+  ~/.ssh                                     tier 2  skipped          tier 2 (~/.ssh) is never accessed
+  ~/.aws                                     tier 2  skipped          tier 2 (~/.aws) is never accessed
+  ~/.npm                                     tier 0  include          
+  /Applications                              tier 0  include          
+  /Volumes                                   tier 3  consent required consent required for this root
+  /Network                                   tier 3  consent required consent required for this root
+
+Press Enter to scan 17 root(s). Press g to grant consent for the selected root.
+
+large: usage error: scan id is required
+enter confirm  esc back/cancel  q quit
