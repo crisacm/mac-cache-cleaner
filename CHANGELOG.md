@@ -39,6 +39,13 @@ y este proyecto se adhiere a [Versionado Semántico](https://semver.org/lang/es/
   persistencia incremental vive en `store` (`NewIncremental`, `CopySubtree`).
 - **Platform** (`internal/platform`): capa `stat` con build tags (`darwin` y
   stub para el resto).
+- **Apps** (`internal/apps`): descubrimiento de aplicaciones y lectura del
+  `Info.plist` (única lectura de contenido permitida, con tope de 1 MiB,
+  `SEC-ACC-02`), con tamaño de la app y de sus datos asociados desde el índice.
+- **Cache** (`internal/cache`): registro de ubicaciones de caché basado en datos
+  (sistema y desarrollo: Gradle, Android, Xcode, npm, pnpm, Go, Homebrew,
+  CocoaPods, Yarn, Cargo, Docker) con su clase de dato.
+
 
 
 
