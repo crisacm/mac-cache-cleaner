@@ -1,20 +1,8 @@
 # MCC — Mac Cache Cleaner
 
-Herramienta de línea de comandos escrita en Go para **indexar y consultar el espacio en disco** que ocupan las aplicaciones, sus cachés, los datos de aplicaciones huérfanas y los archivos o directorios pesados (> 1 GB), con el fin de mantener el almacenamiento del equipo bajo control.
+Herramienta de línea de comandos escrita en Go para **indexar y consultar el espacio en disco** que ocupan las aplicaciones, sus cachés, los datos de aplicaciones huérfanas y los archivos o directorios pesados (> 1 GB).
 
-A futuro, las mismas capacidades se expondrán como un **servidor MCP** para que agentes de IA puedan escanear el sistema, conocer el peso de cachés, apps y ubicaciones, y proponer qué eliminar (siempre con aprobación humana).
-
-> Estado: **Fases 1, 2 y 3 implementadas** (CLI, TUI y servidor MCP).
-
-## Roadmap
-
-| Fase | Entregable | Estado |
-|---|---|---|
-| 1 | CLI: `scan`, `apps`, `cache`, `orphans`, `large`, `clean`, `report`, `permissions`, `data` | Implementado |
-| 2 | TUI interactiva (`mcc tui`) | Implementado |
-| 3 | **Servidor MCP** (stdio): herramientas de solo lectura y de planificación para agentes | Implementado |
-
-Fuera de alcance: demonios en segundo plano, borrado automático, telemetría, servicios de red, elevación de privilegios, lectura del contenido de archivos y otros sistemas operativos.
+Tiene una **TUI** interactiva y un **servidor MCP** para agentes de IA. Nada se elimina nunca: la limpieza **siempre mueve a la Papelera**, tras un plan revisado y confirmado por una persona.
 
 ## Características
 
@@ -24,7 +12,7 @@ Fuera de alcance: demonios en segundo plano, borrado automático, telemetría, s
 - Búsqueda de **archivos y directorios pesados** con umbral configurable.
 - Cachés de desarrollo (Gradle, Android SDK/AVD, Xcode DerivedData, npm, pnpm, Go, Homebrew, Docker).
 - Salida legible o `--json` para scripts.
-- Limpieza segura: plan -> aplicar, *dry-run* por defecto, Papelera y lista blanca de rutas.
+- Limpieza segura: plan -> aplicar, *dry-run* por defecto, **solo Papelera** y lista blanca de rutas.
 - Transparencia: puedes ver qué se accede, qué se guarda y borrarlo (`mcc permissions`, `mcc data`).
 
 ## Requisitos
@@ -51,104 +39,36 @@ mcc large [--min 1GB] [--path PATH]           # archivos/directorios pesados
 mcc clean --plan                              # crea un plan (dry-run), no cambia nada
 mcc clean --apply [--plan-id ID]              # ejecuta un plan (pide confirmación)
 mcc report [--json|--md] [--redact]           # reporte consolidado
-mcc permissions [show|grant|revoke <root>]      # política efectiva y consentimientos
+mcc permissions [show|grant|revoke <root>]    # política efectiva y consentimientos
 mcc data show | purge                         # qué se guarda, dónde, y cómo borrarlo
-mcc tui                                       # interfaz interactiva (fase 2)
+mcc tui                                       # interfaz interactiva
+mcc mcp                                       # servidor MCP (stdio) para agentes
 ```
 
 Los comandos de lectura aceptan `--json` y `--no-color`.
+
+**Códigos de salida:** `0` éxito · `1` error general · `2` uso incorrecto · `3` resultado parcial (rutas inaccesibles) · `4` bloqueado por política / falta consentimiento.
 
 ### Interfaz interactiva (`mcc tui`)
 
 Requiere una terminal. Reutiliza los mismos servicios que la CLI y **no decide accesos por su cuenta** (todo pasa por `internal/policy`).
 
 - **Overview**: totales, última vez escaneada y aviso de resultado parcial.
-- **Carga inicial**: la primera pantalla aparece al instante con un indicador
-  "Cargando índice…" que muestra el paso actual y el directorio que se está
-  leyendo en tiempo real; los datos se cargan en segundo plano y en paralelo.
-- **Apps / Caches / Orphans / Large**: listas ordenables (`s`) y filtrables (`/`),
-  con clase de dato y, en huérfanos, nivel de confianza. Caches, Orphans y Large
-  son **árboles**: `→`/`l` despliega un directorio (o entra en él), `←`/`h` lo
-  pliega (o vuelve al padre), y los hijos se cargan bajo demanda desde el índice.
-  `f` alterna entre mostrar solo directorios o todos los elementos dentro de las
-  carpetas desplegadas. No se puede seleccionar a la vez un directorio y algo
-  dentro de él.
-- **Scan**: muestra primero las raíces efectivas y su veredicto (incluir / requiere consentimiento / omitida); escanea con progreso y se cancela con `Esc` (el índice parcial se revierte). Los niveles 1 y 3 requieren consentimiento ya registrado; `g` abre la confirmación que **nombra la raíz** y exige escribir `grant`.
-- **Limpieza**: selecciona ítems (`espacio`) → `p` crea el plan (dry-run) → pantalla de revisión (cantidad, tamaño total, avisos "puede contener datos del usuario") → `c` y escribir la **cantidad exacta** para aplicar. Todo se mueve a la **Papelera**; no existe borrado permanente.
+- **Carga inicial**: la primera pantalla aparece al instante con un indicador "Cargando índice…" que muestra el paso actual y el directorio que se está leyendo en tiempo real; los datos se cargan en segundo plano y en paralelo.
+- **Apps / Caches / Orphans / Large**: listas ordenables (`s`) y filtrables (`/`), con clase de dato y, en huérfanos, nivel de confianza. Caches, Orphans y Large son **árboles**: `→`/`l` despliega un directorio (o entra en él), `←`/`h` lo pliega (o vuelve al padre), y los hijos se cargan bajo demanda desde el índice. `f` alterna entre mostrar solo directorios o todos los elementos dentro de las carpetas desplegadas. No se puede seleccionar a la vez un directorio y algo dentro de él.
+- **Scan**: muestra primero las raíces efectivas y su veredicto; escanea con progreso y se cancela con `Esc` (el índice parcial se revierte). Los niveles 1 y 3 requieren consentimiento ya registrado; `g` abre la confirmación que **nombra la raíz** y exige escribir `grant`.
+- **Limpieza**: selecciona ítems (`espacio`) → `p` crea el plan (dry-run) → pantalla de revisión (cantidad, tamaño total, avisos "puede contener datos del usuario") → `c` y escribir la **cantidad exacta** para aplicar. Todo se mueve a la **Papelera**.
 - **Permissions**: tabla de política efectiva y consentimientos registrados; `x` revoca el seleccionado.
 - Los ítems `user_file` y `application` se muestran pero **no se pueden seleccionar** para un plan.
 - Navegación: `tab`/`shift+tab`, `q` para salir. Los nombres de archivos/apps se sanitizan (ANSI y caracteres de control) al renderizar.
 
-**Códigos de salida:** `0` éxito · `1` error general · `2` uso incorrecto · `3` resultado parcial (rutas inaccesibles) · `4` bloqueado por política / falta consentimiento.
+### Agentes y MCP
 
-## Servidor MCP (fase 3)
+`mcc mcp` expone el índice a agentes por **stdio** (solo lectura + `create_plan`); **no existe** herramienta para aplicar, borrar, escanear, conceder consentimiento ni cambiar configuración. El agente propone un plan y **la persona lo aplica** fuera del MCP con `mcc clean --apply --plan-id <id>`, que **solo mueve a la Papelera**.
 
-`mcc mcp` expone el índice a **agentes de IA** por el protocolo MCP sobre **stdio** (JSON-RPC). Sirve para que un agente identifique qué apps, cachés, huérfanos y archivos grandes pesan, **compruebe si algo es realmente removible**, y proponga un plan de limpieza.
-
-Reglas de seguridad del servidor (ver `SECURITY.md` §8):
-
-- **Solo lectura + `create_plan`.** No existe ninguna herramienta para aplicar, borrar, escanear, conceder consentimiento, purgar o cambiar configuración.
-- **Nada se elimina.** `create_plan` solo persiste un plan; **tú** lo aplicas fuera del MCP (`mcc clean --apply --plan-id ...`) y eso **mueve a la Papelera**.
-- Los agentes trabajan con **IDs opacos** (`entry_id`, `plan_id`), nunca con rutas libres.
-- **Nivel 2 nunca** se expone; el Nivel 1 solo con consentimiento existente y marcado `report_only`.
-- Rutas acortadas a `~`, nombres saneados, `"untrusted_data": true`, sin contenido de ficheros.
-- Toda llamada queda **auditada** localmente (tabla `mcp_calls`).
-
-### Herramientas
-
-| Herramienta | Para qué |
-|---|---|
-| `mcc_get_status` | Estado del índice, raíces efectivas con veredicto, política y consentimientos |
-| `mcc_list_apps` | Apps instaladas con ubicación y peso (app + datos) |
-| `mcc_list_caches` | Cachés con clase de dato, tamaño y `plannable` |
-| `mcc_list_orphans` | Restos con `confidence` + motivo (`high`/`medium`/`low`) |
-| `mcc_list_large` | Archivos/directorios pesados |
-| `mcc_list_children` | Hijos de un directorio por `entry_id` (para profundizar) |
-| `mcc_get_entry` | Un ítem por `entry_id` + veredicto de política |
-| `mcc_explain` | **Por qué** algo es o no removible (raíz allowlisted, app corriendo, solo-reporte…) |
-| `mcc_verify_orphan` | Re-comprueba si la app existe ahora (degrada la confianza si el descubrimiento fue incompleto) |
-| `mcc_get_report` | Resumen consolidado |
-| `mcc_create_plan` | Crea un plan desde `entry_ids` (no toca el disco); devuelve los omitidos con motivo |
-| `mcc_get_plan` | Consulta un plan por `plan_id` |
-
-Cada ítem incluye `data_class`, `cleanup_eligibility` (`auto_plan` \| `explicit_selection_required` \| `report_only`), **`plannable`** + `plannable_reason`, `may_contain_user_data`, `running` y `mtime`. Flujo recomendado para el agente: `get_status` → `list_*` → `explain`/`verify_orphan` → `create_plan`.
-
-### Conectar un agente
-
-Necesitas la ruta absoluta al binario (`make build` genera `./bin/mcc`). Ejemplo genérico (formato `mcpServers`):
-
-```json
-{
-  "mcpServers": {
-    "mcc": { "command": "/ABSOLUTE/PATH/TO/bin/mcc", "args": ["mcp"] }
-  }
-}
-```
-
-**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "mcc": { "command": "/ABSOLUTE/PATH/TO/bin/mcc", "args": ["mcp"] }
-  }
-}
-```
-
-**opencode** (v2, `opencode.jsonc`):
-
-```jsonc
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "servers": {
-      "mcc": { "type": "local", "command": ["/ABSOLUTE/PATH/TO/bin/mcc", "mcp"] }
-    }
-  }
-}
-```
-
-Si `mcc` está en el `PATH`, puedes usar `"command": "mcc"` (y `"command": ["mcc", "mcp"]` en opencode).
+- Cómo usarlo y cómo conectar un cliente (genérico, Claude Desktop, opencode): [`INSTRUCTIONS.md`](./INSTRUCTIONS.md).
+- Skill para agentes: [`skills/mcc-skill/SKILL.md`](./skills/mcc-skill/SKILL.md).
+- Reglas de seguridad del servidor: [`SECURITY.md`](./SECURITY.md) §8.
 
 ## Seguridad y privacidad
 
@@ -165,149 +85,6 @@ Las reglas completas están en [`SECURITY.md`](./SECURITY.md). Resumen:
 - **Sin telemetría ni red**: nada sale de tu equipo.
 - **Datos locales**: `~/Library/Application Support/mcc/` (permisos `0700`/`0600`). Con `mcc data show` ves qué hay y con `mcc data purge` lo borras.
 - No se ejecuta como root ni se piden privilegios.
-
-## Arquitectura
-
-Arquitectura hexagonal ligera: dominio puro y adaptadores en los bordes.
-
-```
-cmd/mcc/main.go        # solo wiring (inyección manual de dependencias)
-internal/
-  domain/              # tipos puros: App, CacheEntry, Orphan, LargeItem, Plan, ScanResult
-  policy/              # niveles, lista blanca/negra, consentimiento: ÚNICO lugar que decide accesos
-  scanner/             # walker concurrente y cálculo de tamaños
-  scan/                # servicio de orquestación de escaneo (validar raíces, persistir, revertir)
-  apps/                # descubrimiento de apps y lectura de Info.plist
-  cache/               # registro de ubicaciones de caché (basado en datos)
-  orphan/              # detección de huérfanos y scoring de confianza
-  large/               # detección de archivos/directorios pesados
-  store/               # repositorio SQLite y migraciones embebidas
-  cleaner/             # plan (dry-run) -> aplicar -> Papelera
-  consent/             # servicio de consentimiento por raíz (solo interactivo)
-  platform/            # interfaces + implementación darwin (build tags)
-  config/              # viper -> struct tipado
-  render/              # utilidades de presentación compartidas por cli y tui (sanitizar, tamaños)
-  cli/                 # comandos cobra (delgados, sin lógica de negocio)
-  tui/                 # modelos bubbletea (fase 2)
-migrations/            # SQL embebido
-testdata/              # fixtures de un ~/Library falso
-```
-
-**Reglas de dependencia**
-
-- `cli`/`tui` -> servicios -> `domain`; `domain` no importa nada del resto.
-- `store`, `platform` y `cleaner` se consumen mediante interfaces definidas **en el paquete consumidor**.
-- **Toda decisión de acceso pasa por `internal/policy`.**
-- `render` concentra las utilidades de presentación (sanitizar, tamaños, `--redact`) para que `cli` y `tui` compartan una única implementación.
-- La lógica de negocio nunca vive en `cli/`, `tui/` ni `main.go`; la TUI no duplica política ni lógica de servicios.
-
-### Preparado para MCP (fase 3)
-
-Para que el servidor MCP sea una adición y no una reescritura:
-
-- Los servicios devuelven valores de dominio estructurados y **nunca imprimen**; el renderizado vive en `cli/` y `tui/`.
-- `plan` y `apply` son operaciones separadas; los planes se persisten con `plan_id` estable.
-- Las entradas del índice tienen `entry_id` estable; las operaciones de plan/apply usan IDs, no rutas libres.
-- Cada resultado lleva su clase de dato (`regenerable_cache`, `app_data`, `user_file`, `application`).
-
-Cuando llegue la fase 3, el MCP usará transporte stdio, comenzará con herramientas de solo lectura y de planificación, y **no podrá aplicar borrados sin confirmación humana fuera del canal del agente** (ver `SECURITY.md` §8).
-
-### Esquema del índice (SQLite)
-
-- `scans(id, started_at, root)`
-- `entries(entry_id, scan_id, path, parent, allocated_bytes, logical_bytes, mtime, is_dir, kind, data_class, bundle_id)`
-- `consents(root, tier, granted_at, revoked_at)`
-- `plans(plan_id, hash, created_at, expires_at, status)` y `plan_items(plan_id, entry_id, path, dev, inode, size, mtime, data_class)`
-- `audit_log(id, at, action, path, size, plan_id)` (solo se agrega, nunca se edita)
-- Índices en `(scan_id, kind)` y `(scan_id, allocated_bytes DESC)`.
-
-## Decisiones técnicas importantes
-
-- **Tamaño real en disco** = `st_blocks * 512`, no `st_size` (archivos sparse y APFS).
-- **Hardlinks** deduplicados por `(dev, inode)`.
-- **Symlinks** nunca se siguen (`Lstat`).
-- **Dispositivos y firmlinks**: no se cruzan por defecto; se usan raíces de escaneo explícitas.
-- **Permisos (TCC)**: `EPERM`/`EACCES` no son fatales; se reportan y el resultado se marca como parcial.
-- **Paquetes de biblioteca** (`*.photoslibrary`, etc.): se tratan como un solo ítem opaco, solo tamaño.
-- **Rendimiento**: `filepath.WalkDir` con *worker pool* acotado; top-N en memoria para archivos pesados.
-- **Incremental**: se reutiliza el `mtime` de directorios para omitir subárboles sin cambios.
-- **Huérfanos**: bundle IDs en `~/Library/*` sin app instalada, con confianza *alta* (ID exacto), *media* (prefijo de equipo) o *baja* (solo nombre). Los de confianza baja nunca entran a un plan salvo selección explícita; se degradan si alguna ubicación de apps no es accesible.
-
-## Stack
-
-| Necesidad | Librería |
-|---|---|
-| CLI / configuración | `spf13/cobra`, `spf13/viper` |
-| TUI (fase 2) | `charmbracelet/bubbletea`, `lipgloss`, `bubbles` |
-| Base de datos | `modernc.org/sqlite` (sin CGO) |
-| Migraciones | SQL embebido + `pressly/goose` |
-| Concurrencia | stdlib + `golang.org/x/sync` |
-| Plist | `howett.net/plist` |
-| Syscalls | `golang.org/x/sys/unix` |
-| Logging | `log/slog` |
-| Tests | stdlib + `stretchr/testify` |
-| Calidad y seguridad | `golangci-lint` (con `depguard`), `gofumpt`, `govulncheck`, `gosec` |
-| Release | `goreleaser` |
-
-## Convenciones de código
-
-- `context.Context` como primer parámetro en toda función con I/O.
-- Errores envueltos con `%w`; errores centinela o tipados cuando el llamador deba distinguirlos.
-- Interfaces pequeñas, definidas en el consumidor.
-- Sin estado global ni `init()` con efectos; inyección por constructores.
-- Filesystem abstraído (`fs.FS` o interfaz propia) para testear sin tocar el disco real.
-- Código específico de plataforma con build tags (`//go:build darwin`) y stub para el resto.
-- Logging estructurado con `slog`.
-- Rutas limpias, absolutas y con comparación por límite de directorio (`Caches` no coincide con `Caches-evil`).
-- Nombres de archivo tratados como datos no confiables: se sanitizan caracteres de control y secuencias ANSI al imprimir.
-- SQL siempre parametrizado; subprocesos con ruta absoluta y argumentos explícitos (sin `sh -c`).
-- Formato `gofumpt` y lint con `golangci-lint` (`errcheck`, `govet`, `staticcheck`, `gosec`, `revive`, `depguard`).
-- Constantes con nombre y configurables (por ejemplo, el umbral de 1 GB).
-
-## Desarrollo
-
-```bash
-make fmt      # gofumpt
-make lint     # golangci-lint
-make vuln     # govulncheck ./...
-make test     # go test -race ./...
-make build    # CGO_ENABLED=0 go build ./...
-make check    # todo lo anterior
-```
-
-### Pruebas
-
-- Tests *table-driven* con `testify`; fixtures en `t.TempDir()` y un `~/Library` falso en `testdata/`.
-- *Golden files* para la salida del CLI (`internal/cli/testdata/*.golden`).
-- Funcionales: dedup de hardlinks, archivos sparse, no seguir symlinks, `EPERM`, scoring de huérfanos, dry-run vs apply.
-- **De seguridad** (ver `SECURITY.md` §10): Nivel 2 nunca recorrido, consentimiento para Niveles 1/3, escapes por symlink o `..`, cambio de ítem entre plan y apply (TOCTOU), expiración de planes, negativa a ejecutar como root, cachés de apps en ejecución omitidas, sanitización de nombres hostiles, permisos del almacén, sin imports de red.
-- Los tests nunca deben tocar el directorio home real.
-
-### Definición de terminado
-
-Pasan `fmt`, `lint`, `vuln`, `test` (con `-race`) y `build` sin CGO; se cumple el checklist de `SECURITY.md` §12; la documentación/spec está actualizada y el `CHANGELOG.md` tiene su entrada en `[Unreleased]`.
-
-## Flujo de trabajo
-
-- **Spec-driven development** con OpenSpec: una spec por capacidad (`scan`, `apps`, `cache`, `orphans`, `large`, `clean`, `policy`, `tui`).
-- **Conventional Commits** (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`) y **SemVer**.
-- **Keep a Changelog**, escrito en español.
-- Un cambio lógico por commit/PR; no mezclar refactors con cambios de comportamiento.
-
-### Orden de construcción
-
-1. `domain` + `store` + `policy` + migraciones
-2. `scanner` (hardlinks, `st_blocks`, `EPERM`)
-3. `apps` + `cache`
-4. `large`
-5. `orphan`
-6. `cleaner` (plan primero, luego apply)
-7. `cli` (todos los comandos)
-8. `tui` (fase 2)
-
-## Trabajo con agentes de IA
-
-Las instrucciones para agentes están en [`AGENTS.md`](./AGENTS.md) y las reglas de seguridad obligatorias en [`SECURITY.md`](./SECURITY.md). Los agentes deben leer ambos antes de modificar código.
 
 ## Reportar vulnerabilidades
 
