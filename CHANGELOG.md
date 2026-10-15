@@ -9,6 +9,29 @@ y este proyecto se adhiere a [Versionado Semántico](https://semver.org/lang/es/
 
 ### Añadido
 
+- **Servidor MCP** (`internal/mcp`, comando `mcc mcp`): servidor **stdio** (JSON-RPC)
+  para agentes, con transporte propio sin dependencias nuevas. Expone 12
+  herramientas de **solo lectura + `create_plan`/`get_plan`**; **no existe**
+  ninguna herramienta para aplicar, borrar, escanear, conceder consentimiento,
+  purgar ni cambiar configuración (`SEC-MCP-02`, `SEC-MCP-04`). Los agentes
+  operan con **IDs opacos** (`entry_id`/`plan_id`), nunca con rutas
+  (`SEC-MCP-03`); las raíces Nivel 2 se rechazan y las Nivel 1 exigen
+  consentimiento existente (`SEC-MCP-09`). Salida JSON con `schema_version`,
+  rutas acortadas a `~`, nombres saneados y `"untrusted_data": true`
+  (`SEC-MCP-05`); descripciones de herramientas **estáticas** (`SEC-MCP-06`);
+  paginación 50/500 (`SEC-MCP-07`); timeout de 30 s, límite de tasa de 120/min y
+  **auditoría de cada llamada** en la tabla `mcp_calls` (`SEC-MCP-08`).
+  Cada ítem lleva `data_class`, `cleanup_eligibility`, **`plannable`** +
+  `plannable_reason`, `may_contain_user_data`, `running` y `mtime`, y hay
+  `mcc_explain` (por qué es o no removible) y `mcc_verify_orphan` (re-comprueba
+  si la app existe, degradando la confianza).
+- **`internal/proc`**: descubrimiento de aplicaciones en ejecución (`ps` +
+  `Info.plist`, solo metadatos) compartido por `cleaner` y el MCP.
+- **Elegibilidad de limpieza** (`domain.DataClass.Eligibility()`):
+  `auto_plan` | `explicit_selection_required` | `report_only`.
+- **`orphan.Verify`** y `orphan.Classify`/`ConfidenceReason` exportados.
+- **Auditoría MCP** (`migrations/00003_mcp_calls.sql`) y su recuento en
+  `mcc data show` y en `data purge`.
 - **Arranque de la TUI**: la primera pantalla aparece de inmediato con un
   indicador "Cargando índice…" (paso actual + directorio en lectura, en tiempo
   real); los datos se cargan en segundo plano y en paralelo
@@ -135,6 +158,9 @@ y este proyecto se adhiere a [Versionado Semántico](https://semver.org/lang/es/
   (necesarios para deduplicar hardlinks y revalidar en `apply`), estado
   (`finished_at`, `full`, `partial`) a `scans`, la tabla `inaccessible` para
   resultados parciales (`SEC-ACC-05`) y `total_size` a `plans`.
+- El MCP **no expone** `apply_plan`: aplicar ocurre fuera del MCP
+  (`mcc clean --apply --plan-id ...`) y **solo mueve a la Papelera**. Se puede
+  añadir más adelante con confirmación humana externa al agente (`SEC-MCP-02`).
 - El proyecto no hace ninguna llamada de red; `depguard` lo hace cumplir
   (`SEC-COD-07`).
 

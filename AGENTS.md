@@ -14,7 +14,7 @@ Read this file fully before making changes. **Read `SECURITY.md` too: its rules 
 |---|---|---|
 | 1 | CLI (scan, apps, cache, orphans, large, clean, report, permissions, data) | Implement now |
 | 2 | TUI (`mcc tui`) reusing the same services | Implement now |
-| 3 | **MCP server** (stdio) exposing read-only + plan tools to agents | **Future. Do NOT implement**, but keep the code MCP-ready (section 3) |
+| 3 | **MCP server** (stdio) exposing read-only + plan tools to agents | Implemented (`internal/mcp`) |
 
 Non-goals: background daemons, GUI, cloud sync, telemetry, network features, automatic deletion, privilege escalation, reading file contents, non-macOS platforms.
 
@@ -58,6 +58,8 @@ internal/
   render/              # presentation helpers shared by cli and tui (sanitize, sizes)
   cli/                 # cobra commands (thin)
   tui/                 # bubbletea models (phase 2)
+  mcp/                 # MCP stdio server + tools (phase 3)
+  proc/                # running-app discovery (ps + Info.plist)
 migrations/            # SQL files (embedded)
 testdata/              # fake ~/Library fixtures
 ```
@@ -77,7 +79,7 @@ testdata/              # fake ~/Library fixtures
 - `plan` and `apply` are separate service operations. Plans are persisted with a stable `plan_id`.
 - Index entries have a stable `entry_id`; plan/apply operations work from IDs, not free-form paths.
 - Every result carries its data class (`regenerable_cache`, `app_data`, `user_file`, `application`).
-- Do **not** write MCP code, transports or tool definitions in Phases 1-2.
+- Do **not** write MCP code, transports or tool definitions in Phases 1-2: Phase 3 adds them, isolated in `internal/mcp` and bound by `SECURITY.md` §8.
 
 ## 4. Commands (CLI contract)
 
@@ -92,6 +94,7 @@ mcc report [--json|--md] [--redact]
 mcc permissions [show|grant|revoke <root>]        # show effective policy / consents
 mcc data show | purge                  # what is stored, where; wipe it
 mcc tui                                # phase 2
+mcc mcp                                # phase 3: MCP server (stdio) for agents
 ```
 
 - Read commands support `--json` and `--no-color`. JSON output is a stable contract: do not rename/remove fields without a SemVer-aware changelog entry.
@@ -213,6 +216,6 @@ Also required:
 - Don't follow symlinks or cross devices implicitly.
 - Don't delete without plan -> apply, revalidation, allowlist validation and Trash (never delete from disk).
 - Don't add network calls, telemetry, CGO, global state or unbounded goroutines.
-- Don't implement the MCP server (Phase 3) or MCP-specific code.
+- Don't add MCP code outside `internal/mcp`, and never expose a mutating MCP tool (`SEC-MCP-02`).
 - Don't touch the real home directory in tests.
 - Don't write logic in `cmd/mcc/main.go`.

@@ -4,7 +4,7 @@ Herramienta de línea de comandos escrita en Go para **indexar y consultar el es
 
 A futuro, las mismas capacidades se expondrán como un **servidor MCP** para que agentes de IA puedan escanear el sistema, conocer el peso de cachés, apps y ubicaciones, y proponer qué eliminar (siempre con aprobación humana).
 
-> Estado: **Fases 1 y 2 implementadas** (CLI y TUI). El servidor MCP (fase 3) todavía no.
+> Estado: **Fases 1, 2 y 3 implementadas** (CLI, TUI y servidor MCP).
 
 ## Roadmap
 
@@ -12,7 +12,7 @@ A futuro, las mismas capacidades se expondrán como un **servidor MCP** para que
 |---|---|---|
 | 1 | CLI: `scan`, `apps`, `cache`, `orphans`, `large`, `clean`, `report`, `permissions`, `data` | Implementado |
 | 2 | TUI interactiva (`mcc tui`) | Implementado |
-| 3 | **Servidor MCP** (stdio): herramientas de solo lectura y de planificación para agentes | Futuro (el código se diseña desde ya para soportarlo) |
+| 3 | **Servidor MCP** (stdio): herramientas de solo lectura y de planificación para agentes | Implementado |
 
 Fuera de alcance: demonios en segundo plano, borrado automático, telemetría, servicios de red, elevación de privilegios, lectura del contenido de archivos y otros sistemas operativos.
 
@@ -80,6 +80,75 @@ Requiere una terminal. Reutiliza los mismos servicios que la CLI y **no decide a
 - Navegación: `tab`/`shift+tab`, `q` para salir. Los nombres de archivos/apps se sanitizan (ANSI y caracteres de control) al renderizar.
 
 **Códigos de salida:** `0` éxito · `1` error general · `2` uso incorrecto · `3` resultado parcial (rutas inaccesibles) · `4` bloqueado por política / falta consentimiento.
+
+## Servidor MCP (fase 3)
+
+`mcc mcp` expone el índice a **agentes de IA** por el protocolo MCP sobre **stdio** (JSON-RPC). Sirve para que un agente identifique qué apps, cachés, huérfanos y archivos grandes pesan, **compruebe si algo es realmente removible**, y proponga un plan de limpieza.
+
+Reglas de seguridad del servidor (ver `SECURITY.md` §8):
+
+- **Solo lectura + `create_plan`.** No existe ninguna herramienta para aplicar, borrar, escanear, conceder consentimiento, purgar o cambiar configuración.
+- **Nada se elimina.** `create_plan` solo persiste un plan; **tú** lo aplicas fuera del MCP (`mcc clean --apply --plan-id ...`) y eso **mueve a la Papelera**.
+- Los agentes trabajan con **IDs opacos** (`entry_id`, `plan_id`), nunca con rutas libres.
+- **Nivel 2 nunca** se expone; el Nivel 1 solo con consentimiento existente y marcado `report_only`.
+- Rutas acortadas a `~`, nombres saneados, `"untrusted_data": true`, sin contenido de ficheros.
+- Toda llamada queda **auditada** localmente (tabla `mcp_calls`).
+
+### Herramientas
+
+| Herramienta | Para qué |
+|---|---|
+| `mcc_get_status` | Estado del índice, raíces efectivas con veredicto, política y consentimientos |
+| `mcc_list_apps` | Apps instaladas con ubicación y peso (app + datos) |
+| `mcc_list_caches` | Cachés con clase de dato, tamaño y `plannable` |
+| `mcc_list_orphans` | Restos con `confidence` + motivo (`high`/`medium`/`low`) |
+| `mcc_list_large` | Archivos/directorios pesados |
+| `mcc_list_children` | Hijos de un directorio por `entry_id` (para profundizar) |
+| `mcc_get_entry` | Un ítem por `entry_id` + veredicto de política |
+| `mcc_explain` | **Por qué** algo es o no removible (raíz allowlisted, app corriendo, solo-reporte…) |
+| `mcc_verify_orphan` | Re-comprueba si la app existe ahora (degrada la confianza si el descubrimiento fue incompleto) |
+| `mcc_get_report` | Resumen consolidado |
+| `mcc_create_plan` | Crea un plan desde `entry_ids` (no toca el disco); devuelve los omitidos con motivo |
+| `mcc_get_plan` | Consulta un plan por `plan_id` |
+
+Cada ítem incluye `data_class`, `cleanup_eligibility` (`auto_plan` \| `explicit_selection_required` \| `report_only`), **`plannable`** + `plannable_reason`, `may_contain_user_data`, `running` y `mtime`. Flujo recomendado para el agente: `get_status` → `list_*` → `explain`/`verify_orphan` → `create_plan`.
+
+### Conectar un agente
+
+Necesitas la ruta absoluta al binario (`make build` genera `./bin/mcc`). Ejemplo genérico (formato `mcpServers`):
+
+```json
+{
+  "mcpServers": {
+    "mcc": { "command": "/ABSOLUTE/PATH/TO/bin/mcc", "args": ["mcp"] }
+  }
+}
+```
+
+**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "mcc": { "command": "/ABSOLUTE/PATH/TO/bin/mcc", "args": ["mcp"] }
+  }
+}
+```
+
+**opencode** (v2, `opencode.jsonc`):
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "mcc": { "type": "local", "command": ["/ABSOLUTE/PATH/TO/bin/mcc", "mcp"] }
+    }
+  }
+}
+```
+
+Si `mcc` está en el `PATH`, puedes usar `"command": "mcc"` (y `"command": ["mcc", "mcp"]` en opencode).
 
 ## Seguridad y privacidad
 

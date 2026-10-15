@@ -1,6 +1,6 @@
 # Spec: mcp
 
-Status: in progress (Phase 3).
+Status: implemented (Phase 3).
 
 ## Capability
 
