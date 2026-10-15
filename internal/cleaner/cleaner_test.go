@@ -2,6 +2,7 @@ package cleaner
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -341,22 +342,32 @@ func TestApplyOnlyAffectsPlannedItems(t *testing.T) {
 	require.DirExists(t, unplanned, "unplanned items must be untouched")
 }
 
-func TestApplyPermanentRequiresExtraConfirmation(t *testing.T) {
+// failingTrasher simulates a Trash failure; MCC must report it and never fall
+// back to deleting.
+type failingTrasher struct{ calls int }
+
+func (f *failingTrasher) Trash(context.Context, string) error {
+	f.calls++
+	return errors.New("trash unavailable")
+}
+
+func TestApplyNeverDeletesOnTrashFailure(t *testing.T) {
 	home := t.TempDir()
 	cache := mkCacheDir(t, home, "com.example.cache")
-	svc := New(newFakeStore(), policy.New(home, nil), home, WithTrasher(&fakeTrasher{}), WithRunningApps(fakeRunning{}))
+	tr := &failingTrasher{}
+	svc := New(newFakeStore(), policy.New(home, nil), home, WithTrasher(tr), WithRunningApps(fakeRunning{}))
 	res, err := svc.Plan(context.Background(), PlanOptions{
 		ScanID:     "scan-1",
 		Candidates: []Candidate{{Entry: mkEntry(t, "scan-1", cache, domain.ClassRegenerableCache)}},
 	})
 	require.NoError(t, err)
 
-	_, err = svc.Apply(context.Background(), ApplyOptions{
-		PlanID:    res.Plan.PlanID,
-		Confirm:   alwaysConfirm(true),
-		Permanent: true,
-	})
-	require.ErrorIs(t, err, domain.ErrBlocked)
+	out, err := svc.Apply(context.Background(), ApplyOptions{PlanID: res.Plan.PlanID, Confirm: alwaysConfirm(true)})
+	require.NoError(t, err)
+	require.Equal(t, 1, tr.calls, "apply must use the Trasher")
+	require.Empty(t, out.Applied)
+	require.Len(t, out.Failed, 1, "a trash failure is a failure, never a deletion")
+	// The item is untouched: MCC never deletes from disk.
 	require.DirExists(t, cache)
 }
 

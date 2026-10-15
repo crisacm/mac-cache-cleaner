@@ -92,7 +92,7 @@ All access decisions are enforced by a single package, `internal/policy`. CLI, T
 | `user_file` (Tier 1) | **Never automated** | Report-only; deletion only via explicit per-item human action in an interactive session |
 | `application` | No (MCC does not uninstall apps) | Report-only |
 
-- **SEC-DEL-04** The default action is **move to Trash**. Permanent deletion requires a separate explicit flag plus an extra confirmation and MUST NOT be reachable from MCP.
+- **SEC-DEL-04** All cleanup **moves items to the Trash**. MCC MUST NOT delete anything from disk: permanent deletion is not implemented and MUST NOT be added without a security review. If moving to the Trash fails, the item is reported and left untouched — MCC never falls back to deleting.
 - **SEC-DEL-05** MCC MUST NOT delete: allowlisted root directories themselves (e.g. `~/Library/Caches`), anything outside the allowlist, SIP-protected paths, `com.apple.*`, or Tier 2/3 locations.
 - **SEC-DEL-06** At apply time every item is **revalidated**: still inside an allowlisted root, not a symlink, same `(dev, inode)` as planned, and size/mtime unchanged within tolerance. Changed or unverifiable items are skipped and reported.
 - **SEC-DEL-07** Caches belonging to a **running** application are skipped by default and reported.
@@ -187,7 +187,7 @@ Do **not** open a public issue for security problems. Report privately to `<secu
 
 - [ ] No file contents are read (SEC-ACC-02); no new access outside `internal/policy`.
 - [ ] No Tier 2 access; Tier 1/3 gated by consent.
-- [ ] Destructive paths go through plan -> apply with revalidation, Trash by default.
+- [ ] Destructive paths go through plan -> apply with revalidation, Trash only (never delete from disk).
 - [ ] No new network access, telemetry or privileged operation.
 - [ ] Hostile file names are sanitized in every output.
 - [ ] Subprocesses use explicit argv; SQL is parameterized.

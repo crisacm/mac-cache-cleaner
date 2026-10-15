@@ -28,7 +28,6 @@ func (a *App) newCleanCmd() *cobra.Command {
 	cmd.Flags().Bool("plan", false, "create a plan (dry-run)")
 	cmd.Flags().Bool("apply", false, "apply an existing plan")
 	cmd.Flags().String("plan-id", "", "plan to apply")
-	cmd.Flags().Bool("permanent", false, "permanently delete instead of Trash (extra confirmation)")
 	cmd.Flags().StringArray("entry", nil, "explicit entry ID to include (required for app_data)")
 	addReadFlags(cmd)
 	return cmd
@@ -163,7 +162,6 @@ func (a *App) planCandidates(ctx context.Context, scanID string, explicitIDs []s
 
 func (a *App) applyClean(ctx context.Context, cmd *cobra.Command) error {
 	planID, _ := cmd.Flags().GetString("plan-id")
-	permanent, _ := cmd.Flags().GetBool("permanent")
 	asJSON, _ := cmd.Flags().GetBool("json")
 	if planID == "" {
 		return fmt.Errorf("%w: --plan-id is required with --apply", domain.ErrUsage)
@@ -171,12 +169,8 @@ func (a *App) applyClean(ctx context.Context, cmd *cobra.Command) error {
 
 	svc := cleaner.New(a.Store, a.Policy, a.Home)
 	opts := cleaner.ApplyOptions{
-		PlanID:    planID,
-		Permanent: permanent,
-		Confirm:   a.confirm("Move to Trash", "yes"),
-	}
-	if permanent {
-		opts.ConfirmPermanent = a.confirm("PERMANENTLY DELETE", "DELETE")
+		PlanID:  planID,
+		Confirm: a.confirm("Move to Trash", "yes"),
 	}
 
 	res, err := svc.Apply(ctx, opts)

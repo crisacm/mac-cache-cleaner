@@ -17,11 +17,6 @@ type ApplyOptions struct {
 	// Confirm is called before any destructive action and must return true.
 	// It receives the item count and total size for the prompt (SEC-DEL-02).
 	Confirm func(count int, totalBytes int64) (bool, error)
-	// Permanent enables permanent deletion; it requires ConfirmPermanent to
-	// return true as well (SEC-DEL-04).
-	Permanent bool
-	// ConfirmPermanent is the extra confirmation for permanent deletion.
-	ConfirmPermanent func(count int, totalBytes int64) (bool, error)
 	// MaxItems / MaxBytes are extra apply-time limits (SEC-DEL-11).
 	MaxItems int
 	MaxBytes int64
@@ -84,19 +79,6 @@ func (s *Service) Apply(ctx context.Context, opts ApplyOptions) (ApplyResult, er
 		return ApplyResult{}, fmt.Errorf("%w: cancelled by user", domain.ErrBlocked)
 	}
 
-	if opts.Permanent {
-		if opts.ConfirmPermanent == nil {
-			return ApplyResult{}, fmt.Errorf("%w: permanent deletion needs an extra confirmation", domain.ErrBlocked)
-		}
-		ok, err := opts.ConfirmPermanent(len(items), total)
-		if err != nil {
-			return ApplyResult{}, err
-		}
-		if !ok {
-			return ApplyResult{}, fmt.Errorf("%w: permanent deletion cancelled", domain.ErrBlocked)
-		}
-	}
-
 	running := map[string]struct{}{}
 	if s.running != nil {
 		if ids, err := s.running.BundleIDs(ctx); err == nil {
@@ -123,21 +105,16 @@ func (s *Service) Apply(ctx context.Context, opts ApplyOptions) (ApplyResult, er
 			}
 		}
 
-		action := "trash"
-		if opts.Permanent {
-			action = "delete"
-			err = os.RemoveAll(item.Path) // #nosec G304 -- item.Path is a validated plan path
-		} else {
-			err = s.trash.Trash(ctx, item.Path)
-		}
-		if err != nil {
+		// Everything moves to the Trash; MCC never deletes from disk
+		// (SEC-DEL-04).
+		if err := s.trash.Trash(ctx, item.Path); err != nil {
 			outcome.Reason = err.Error()
 			result.Failed = append(result.Failed, outcome)
-			s.audit(ctx, plan.PlanID, action+":failed", item, outcome.Reason)
+			s.audit(ctx, plan.PlanID, "trash:failed", item, outcome.Reason)
 			continue
 		}
 		result.Applied = append(result.Applied, outcome)
-		s.audit(ctx, plan.PlanID, action, item, "")
+		s.audit(ctx, plan.PlanID, "trash", item, "")
 	}
 
 	status := domain.PlanApplied

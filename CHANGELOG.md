@@ -56,13 +56,13 @@ y este proyecto se adhiere a [Versionado Semántico](https://semver.org/lang/es/
   con ID, *hash* y vencimiento (por defecto 1 h); `apply` exige confirmación
   interactiva con cantidad y tamaño total, revalida cada ítem (ruta permitida,
   no symlink, mismo `(dev, inode)`, tamaño y `mtime`), omite cachés de apps en
-  ejecución, mueve a la Papelera por defecto (rename a `~/.Trash`, con respaldo
-  vía `osascript`/Finder y argv explícitos), admite borrado permanente solo con
-  bandera + confirmación extra, y escribe el registro de auditoría.
+  ejecución, **mueve a la Papelera** (rename a `~/.Trash`, con respaldo vía
+  `osascript`/Finder y argv explícitos), nunca borra del disco, y escribe el
+  registro de auditoría.
 - **CLI** (`internal/cli`): comandos `scan` (`--root`, `--full`, `--explain`),
   `apps` (`--sort`), `cache` (`--app`), `orphans` (`--min-confidence`), `large`
-  (`--min`, `--path`), `clean` (`--plan`, `--apply`, `--plan-id`, `--permanent`,
-  `--entry`), `report` (`--json`, `--md`, `--redact`), `permissions`
+  (`--min`, `--path`), `clean` (`--plan`, `--apply`, `--plan-id`, `--entry`),
+  `report` (`--json`, `--md`, `--redact`), `permissions`
   (`show` | `grant` | `revoke`) y `data` (`show` | `purge`). Los comandos de
   lectura aceptan `--json` y `--no-color`; la salida sanitiza caracteres de
   control y ANSI; códigos de salida 0/1/2/3/4 (3 = resultado parcial). Incluye
@@ -92,6 +92,14 @@ y este proyecto se adhiere a [Versionado Semántico](https://semver.org/lang/es/
   raíz y escribir `grant`. Incluye pruebas dirigidas por mensajes y vistas
   *golden* (`internal/tui/testdata/`).
 
+### Eliminado
+
+- **Borrado permanente**: se elimina por completo del código y la CLI
+  (`cleaner.Permanent`/`ConfirmPermanent` y el flag `mcc clean --apply
+  --permanent`). Todo se **mueve a la Papelera**; MCC nunca borra del disco. Si
+  mover a la Papelera falla, el ítem se reporta como fallido y queda intacto.
+  Endurece `SEC-DEL-04` (`SECURITY.md`).
+
 ### Notas / decisiones
 
 - `clean --plan` **nunca** incluye las raíces de la lista blanca (p. ej.
@@ -100,10 +108,9 @@ y este proyecto se adhiere a [Versionado Semántico](https://semver.org/lang/es/
   ejecución. Los datos de app (`app_data`) requieren selección explícita con
   `--entry` (advertencia "puede contener datos del usuario").
 - La confirmación de `clean --apply` exige la palabra exacta `yes` (no basta
-  Enter); el borrado permanente exige además `DELETE`. En la TUI la
-  confirmación exige escribir la **cantidad exacta de ítems**. El consentimiento
-  de Nivel 1/3 solo se concede de forma interactiva en un TTY (`mcc permissions
-  grant <root>` o `g` en la pantalla Scan).
+  Enter); en la TUI la confirmación exige escribir la **cantidad exacta de
+  ítems**. El consentimiento de Nivel 1/3 solo se concede de forma interactiva
+  en un TTY (`mcc permissions grant <root>` o `g` en la pantalla Scan).
 - En la revalidación de `apply`, el tamaño se compara **solo en archivos**: las
   entradas de directorio llevan el tamaño de subárbol, así que un directorio se
   revalida por `mtime` + `(dev, inode)`.

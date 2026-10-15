@@ -65,7 +65,7 @@ Requiere una terminal. Reutiliza los mismos servicios que la CLI y **no decide a
 - **Overview**: totales, última vez escaneada y aviso de resultado parcial.
 - **Apps / Caches / Orphans / Large**: listas ordenables (`s`) y filtrables (`/`), con clase de dato y, en huérfanos, nivel de confianza.
 - **Scan**: muestra primero las raíces efectivas y su veredicto (incluir / requiere consentimiento / omitida); escanea con progreso y se cancela con `Esc` (el índice parcial se revierte). Los niveles 1 y 3 requieren consentimiento ya registrado; `g` abre la confirmación que **nombra la raíz** y exige escribir `grant`.
-- **Limpieza**: selecciona ítems (`espacio`) → `p` crea el plan (dry-run) → pantalla de revisión (cantidad, tamaño total, avisos "puede contener datos del usuario") → `c` y escribir la **cantidad exacta** para aplicar. Solo Papelera; el borrado permanente no está disponible desde la TUI.
+- **Limpieza**: selecciona ítems (`espacio`) → `p` crea el plan (dry-run) → pantalla de revisión (cantidad, tamaño total, avisos "puede contener datos del usuario") → `c` y escribir la **cantidad exacta** para aplicar. Todo se mueve a la **Papelera**; no existe borrado permanente.
 - **Permissions**: tabla de política efectiva y consentimientos registrados; `x` revoca el seleccionado.
 - Los ítems `user_file` y `application` se muestran pero **no se pueden seleccionar** para un plan.
 - Navegación: `tab`/`shift+tab`, `q` para salir. Los nombres de archivos/apps se sanitizan (ANSI y caracteres de control) al renderizar.
@@ -83,7 +83,7 @@ Las reglas completas están en [`SECURITY.md`](./SECURITY.md). Resumen:
   - *Nivel 2* (sensibles: Fotos internas, Llaves, iCloud, Mail, Mensajes, `~/.ssh`…): **nunca se acceden**, ni con consentimiento.
   - *Nivel 3* (discos externos, red, Time Machine): solo con `--root` explícito y consentimiento; Time Machine nunca.
 - **Consentimiento** por carpeta, solo interactivo, registrado y revocable. `--yes` no concede consentimiento.
-- **Limpieza segura**: plan inmutable con vencimiento, revalidación de cada ítem antes de actuar, **Papelera por defecto**, lista blanca de rutas, no se toca SIP ni `com.apple.*`, se omiten cachés de apps en ejecución. `mcc clean --apply` muestra la cantidad y el tamaño total y exige escribir `yes` (el borrado permanente exige además `DELETE`). Las raíces de la lista blanca (p. ej. `~/Library/Caches`) nunca entran en un plan; se ofrecen sus hijos directos.
+- **Limpieza segura**: plan inmutable con vencimiento, revalidación de cada ítem antes de actuar, **siempre a la Papelera** (nunca se borra del disco), lista blanca de rutas, no se toca SIP ni `com.apple.*`, se omiten cachés de apps en ejecución. `mcc clean --apply` muestra la cantidad y el tamaño total y exige escribir `yes`. Si mover a la Papelera falla, el ítem se reporta y se deja intacto. Las raíces de la lista blanca (p. ej. `~/Library/Caches`) nunca entran en un plan; se ofrecen sus hijos directos.
 - **Sin telemetría ni red**: nada sale de tu equipo.
 - **Datos locales**: `~/Library/Application Support/mcc/` (permisos `0700`/`0600`). Con `mcc data show` ves qué hay y con `mcc data purge` lo borras.
 - No se ejecuta como root ni se piden privilegios.

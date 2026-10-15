@@ -18,9 +18,10 @@ separate service operations so the flow stays MCP-ready (AGENTS.md §3).
 - **CL-3** Eligibility by class: `regenerable_cache` is planned automatically;
   `app_data` needs explicit per-item selection and a "may contain user data"
   warning; `user_file` and `application` are report-only (SEC-DEL-03).
-- **CL-4** Default action is move to Trash (`~/.Trash` rename, falling back to
-  Finder via `osascript` with explicit argv). Permanent deletion needs a
-  separate flag **and** an extra confirmation (SEC-DEL-04, SEC-DEL-09).
+- **CL-4** All cleanup **moves items to the Trash** (`~/.Trash` rename, falling back
+  to Finder via `osascript` with explicit argv). MCC never deletes from disk;
+  there is no permanent-delete path. A Trash failure is reported and the item is
+  left untouched (SEC-DEL-04, SEC-DEL-09, SEC-DEL-10).
 - **CL-5** Every item is revalidated at apply time: still allowed by policy,
   not a symlink, same `(dev, inode)`, size and mtime unchanged (SEC-DEL-06).
 - **CL-6** Caches of running applications are skipped at plan and apply time

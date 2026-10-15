@@ -129,7 +129,7 @@ Cache locations live in a data-driven registry in `internal/cache`. Add new loca
 - Consent is per root, granted only interactively on a TTY, recorded in SQLite, revocable. `--yes` never grants consent.
 - Cleanup is **plan -> apply**: immutable plan with ID, hash and expiry; apply acts only on planned items and **revalidates** each (inside allowlisted root, not a symlink, same `(dev, inode)`, size/mtime unchanged).
 - Eligibility by class: `regenerable_cache` may be planned; `app_data` (incl. orphans) only by explicit per-item human selection with a "may contain user data" warning; `user_file` and `application` are report-only.
-- Default action is **move to Trash**. Permanent delete needs a separate flag + extra confirmation and must never be reachable from MCP.
+- All cleanup **moves items to the Trash**; MCC never deletes from disk. There is no permanent-delete path. If moving to the Trash fails, the item is reported and left untouched.
 - Never delete allowlisted roots themselves, anything outside the allowlist, SIP paths, `com.apple.*`, Tier 2/3 locations. Skip caches of running apps.
 - Subprocesses (e.g. `osascript` for Trash): absolute binary path, explicit argv, no `sh -c`, never interpolate paths into script text.
 - File and app names are **untrusted data**: strip/escape control and ANSI sequences in terminal output.
@@ -202,7 +202,7 @@ Also required:
 - Don't read file contents or touch Tier 2 paths, ever.
 - Don't use `st_size` as disk usage.
 - Don't follow symlinks or cross devices implicitly.
-- Don't delete without plan -> apply, revalidation, allowlist validation and Trash by default.
+- Don't delete without plan -> apply, revalidation, allowlist validation and Trash (never delete from disk).
 - Don't add network calls, telemetry, CGO, global state or unbounded goroutines.
 - Don't implement the MCP server (Phase 3) or MCP-specific code.
 - Don't touch the real home directory in tests.
