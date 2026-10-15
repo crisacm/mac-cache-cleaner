@@ -176,8 +176,11 @@ func (m *Model) handleApplyDone(msg applyDoneMsg) (tea.Model, tea.Cmd) {
 	m.clean.result = msg.res
 	m.setStatus(statusGood, fmt.Sprintf("applied %d, skipped %d, failed %d",
 		len(msg.res.Applied), len(msg.res.Skipped), len(msg.res.Failed)))
-	m.reload()
-	return m, nil
+	// Clear the selection and reload the lists (sizes changed).
+	for _, l := range m.lists {
+		l.clearSelection()
+	}
+	return m, m.startLoad()
 }
 
 // renderClean draws the cleanup flow.

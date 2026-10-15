@@ -178,21 +178,21 @@ func (m *Model) handleScanDone(msg scanDoneMsg) (tea.Model, tea.Cmd) {
 	err := msg.outcome.err
 	switch {
 	case err == nil:
-		m.reload()
 		res := msg.outcome.out.Result
-		m.setStatus(statusGood, fmt.Sprintf("scan complete: %d entries, %s",
-			res.Totals.Entries, render.FormatBytes(res.Totals.AllocatedBytes)))
 		if res.Partial {
 			m.setStatus(statusWarn, fmt.Sprintf("scan complete (partial): %d inaccessible path(s)",
 				len(res.Inaccessible)))
+		} else {
+			m.setStatus(statusGood, fmt.Sprintf("scan complete: %d entries, %s",
+				res.Totals.Entries, render.FormatBytes(res.Totals.AllocatedBytes)))
 		}
 	case isCancelled(err):
-		m.reload()
 		m.setStatus(statusWarn, "scan cancelled — partial index rolled back")
 	default:
 		m.setStatus(statusError, "scan failed: "+err.Error())
 	}
-	return m, nil
+	// Reload the lists with the new (or rolled-back) index.
+	return m, m.startLoad()
 }
 
 func isCancelled(err error) bool {

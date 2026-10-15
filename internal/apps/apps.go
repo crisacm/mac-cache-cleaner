@@ -47,6 +47,18 @@ func New(index Index, home string, roots ...string) *Service {
 // List returns the discovered applications, sorted by size (descending) then
 // name. When scanID is empty or unknown, sizes are zero.
 func (s *Service) List(ctx context.Context, scanID string) ([]domain.App, error) {
+	return s.ListWithProgress(ctx, scanID, nil)
+}
+
+// ListWithProgress is List with an optional progress callback that receives the
+// path currently being read (for a loading indicator). The callback must not
+// block.
+func (s *Service) ListWithProgress(ctx context.Context, scanID string, progress func(string)) ([]domain.App, error) {
+	report := func(p string) {
+		if progress != nil {
+			progress(p)
+		}
+	}
 	var out []domain.App
 	for _, root := range s.roots {
 		des, err := os.ReadDir(root)
@@ -59,6 +71,7 @@ func (s *Service) List(ctx context.Context, scanID string) ([]domain.App, error)
 				continue
 			}
 			full := filepath.Join(root, de.Name())
+			report(full)
 			app := domain.App{Path: full, Name: strings.TrimSuffix(de.Name(), ".app"), Tier: domain.TierDefault}
 
 			if info, err := ReadBundleInfo(full); err == nil {

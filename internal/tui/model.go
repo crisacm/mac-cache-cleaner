@@ -2,7 +2,9 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"strings"
+	"sync"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -75,6 +77,12 @@ type Model struct {
 	screen   screen
 	quitting bool
 
+	loading     bool
+	loadStep    string
+	loadCurrent string
+	loadCh      chan loadProgress
+	loadDone    chan loadedMsg
+
 	hasScan    bool
 	latestScan domain.Scan
 	overview   overviewData
@@ -107,10 +115,38 @@ func newModel(ctx context.Context, deps Deps, r *lipgloss.Renderer) *Model {
 	return m
 }
 
-// Init implements tea.Model.
+// loadProgress is a loading step report.
+type loadProgress struct {
+	Step    string
+	Current string
+}
+
+// loadProgressMsg carries a loading step.
+type loadProgressMsg struct{ p loadProgress }
+
+// loadedMsg carries the finished load.
+type loadedMsg struct {
+	data loadedData
+	err  error
+}
+
+// loadedData is everything the read-only screens need.
+type loadedData struct {
+	hasScan  bool
+	scan     domain.Scan
+	overview overviewData
+	apps     []row
+	caches   []row
+	orphans  []row
+	large    []row
+	consents []domain.Consent
+	errs     []string
+}
+
+// Init implements tea.Model. It starts the asynchronous load so the first frame
+// appears immediately.
 func (m *Model) Init() tea.Cmd {
-	m.reload()
-	return nil
+	return m.startLoad()
 }
 
 // Update implements tea.Model.
@@ -121,6 +157,23 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
+	case loadProgressMsg:
+		m.loadStep = msg.p.Step
+		if msg.p.Current != "" {
+			m.loadCurrent = msg.p.Current
+		}
+		return m, waitLoadProgress(m.loadCh)
+	case loadedMsg:
+		m.loading = false
+		if msg.err != nil {
+			m.setStatus(statusError, "load: "+msg.err.Error())
+			return m, nil
+		}
+		m.applyLoaded(msg.data)
+		if len(msg.data.errs) > 0 {
+			m.setStatus(statusWarn, "carga parcial: "+strings.Join(msg.data.errs, "; "))
+		}
+		return m, nil
 	case scanProgressMsg:
 		return m.handleScanProgress(msg.p)
 	case scanDoneMsg:
@@ -131,92 +184,239 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// reload loads all data used by the read-only screens.
-func (m *Model) reload() {
+// startLoad begins an asynchronous load and returns the commands that stream
+// progress and completion back to the model.
+func (m *Model) startLoad() tea.Cmd {
+	m.loading = true
+	m.loadStep = ""
+	m.loadCurrent = ""
+	ch := make(chan loadProgress, 64)
+	done := make(chan loadedMsg, 1)
+	m.loadCh = ch
+	m.loadDone = done
+	go func() {
+		data, err := m.loadData(func(p loadProgress) {
+			select {
+			case ch <- p:
+			default: // drop frames; only the latest matters
+			}
+		})
+		close(ch)
+		done <- loadedMsg{data: data, err: err}
+	}()
+	return tea.Batch(waitLoadProgress(ch), waitLoadDone(done))
+}
+
+func waitLoadProgress(ch <-chan loadProgress) tea.Cmd {
+	return func() tea.Msg {
+		p, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return loadProgressMsg{p}
+	}
+}
+
+func waitLoadDone(done <-chan loadedMsg) tea.Cmd {
+	return func() tea.Msg { return <-done }
+}
+
+// loadSync performs the load inline (used by tests).
+func (m *Model) loadSync() {
+	data, err := m.loadData(func(loadProgress) {})
+	m.loading = false
+	if err != nil {
+		m.setStatus(statusError, "load: "+err.Error())
+		return
+	}
+	m.applyLoaded(data)
+}
+
+// loadData gathers everything the read-only screens need. The independent
+// loaders run in parallel; progress reports the step and current path.
+func (m *Model) loadData(progress func(loadProgress)) (loadedData, error) {
 	ctx := m.ctx
-	m.hasScan = false
-	if scan, err := m.deps.Store.LatestScan(ctx); err == nil {
-		m.hasScan = true
-		m.latestScan = scan
+	var data loadedData
+
+	progress(loadProgress{Step: "último escaneo"})
+	if sc, err := m.deps.Store.LatestScan(ctx); err == nil {
+		data.hasScan = true
+		data.scan = sc
 	}
 	scanID := ""
-	if m.hasScan {
-		scanID = m.latestScan.ID
+	if data.hasScan {
+		scanID = data.scan.ID
 	}
 
-	ov := overviewData{}
-	if m.hasScan {
-		ov.ScanID = m.latestScan.ID
-		ov.Partial = m.latestScan.Partial
-		if !m.latestScan.FinishedAt.IsZero() {
-			ov.FinishedAt = m.latestScan.FinishedAt.Format("2006-01-02 15:04:05")
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	fail := func(step string, err error) {
+		mu.Lock()
+		data.errs = append(data.errs, step+": "+err.Error())
+		mu.Unlock()
+	}
+
+	wg.Add(5)
+
+	// Totals + per-class sizes (the heaviest DB work).
+	go func() {
+		defer wg.Done()
+		progress(loadProgress{Step: "totales"})
+		if !data.hasScan {
+			return
 		}
-		ov.Totals, _ = m.deps.Store.Totals(ctx, scanID)
-		ov.ByClass, _ = m.deps.Store.TotalsByClass(ctx, scanID)
+		ov := overviewData{
+			ScanID:     scanID,
+			Partial:    data.scan.Partial,
+			FinishedAt: "",
+		}
+		if !data.scan.FinishedAt.IsZero() {
+			ov.FinishedAt = data.scan.FinishedAt.Format("2006-01-02 15:04:05")
+		}
+		byClass, err := m.deps.Store.TotalsByClass(ctx, scanID)
+		if err != nil {
+			fail("totales", err)
+		} else {
+			ov.ByClass = byClass
+			for _, t := range byClass {
+				ov.Totals.Entries += t.Entries
+				ov.Totals.AllocatedBytes += t.AllocatedBytes
+				ov.Totals.LogicalBytes += t.LogicalBytes
+			}
+		}
 		if inacc, err := m.deps.Store.Inaccessible(ctx, scanID); err == nil {
 			ov.Inaccessible = len(inacc)
 		}
+		mu.Lock()
+		data.overview = ov
+		mu.Unlock()
+	}()
+
+	go func() {
+		defer wg.Done()
+		progress(loadProgress{Step: "aplicaciones"})
+		rows, err := m.loadApps(ctx, scanID, progress)
+		if err != nil {
+			fail("apps", err)
+			return
+		}
+		mu.Lock()
+		data.apps = rows
+		mu.Unlock()
+	}()
+
+	go func() {
+		defer wg.Done()
+		progress(loadProgress{Step: "cachés"})
+		rows, err := m.loadCaches(ctx, scanID)
+		if err != nil {
+			fail("cachés", err)
+			return
+		}
+		mu.Lock()
+		data.caches = rows
+		mu.Unlock()
+	}()
+
+	go func() {
+		defer wg.Done()
+		progress(loadProgress{Step: "huérfanos"})
+		rows, err := m.loadOrphans(ctx, scanID, progress)
+		if err != nil {
+			fail("huérfanos", err)
+			return
+		}
+		mu.Lock()
+		data.orphans = rows
+		mu.Unlock()
+	}()
+
+	go func() {
+		defer wg.Done()
+		progress(loadProgress{Step: "elementos grandes"})
+		rows, err := m.loadLarge(ctx, scanID)
+		if err != nil {
+			fail("grandes", err)
+			return
+		}
+		mu.Lock()
+		data.large = rows
+		mu.Unlock()
+	}()
+
+	wg.Wait()
+
+	progress(loadProgress{Step: "permisos"})
+	consents, err := m.deps.Store.Consents(ctx)
+	if err != nil {
+		data.errs = append(data.errs, "permisos: "+err.Error())
 	}
+	data.consents = consents
+	progress(loadProgress{Step: "listo"})
+	return data, nil
+}
 
-	appRows := rowsFromApps(m.listApps(ctx, scanID))
-	m.lists[screenApps].setRows(appRows)
-	ov.Apps = len(appRows)
-
-	cacheRows := rowsFromCaches(m.listCaches(ctx, scanID))
-	m.lists[screenCaches].setRows(cacheRows)
-	ov.Caches = len(cacheRows)
-
-	orbRows := rowsFromOrphans(m.listOrphans(ctx, scanID))
-	m.lists[screenOrphans].setRows(orbRows)
-	ov.Orphans = len(orbRows)
-
-	largeRows := rowsFromLarge(m.listLarge(ctx, scanID))
-	m.lists[screenLarge].setRows(largeRows)
-	ov.Large = len(largeRows)
-
+// applyLoaded installs a finished load into the model.
+func (m *Model) applyLoaded(data loadedData) {
+	m.hasScan = data.hasScan
+	m.latestScan = data.scan
+	ov := data.overview
+	ov.Apps = len(data.apps)
+	ov.Caches = len(data.caches)
+	ov.Orphans = len(data.orphans)
+	ov.Large = len(data.large)
 	m.overview = ov
-	m.perms = newPermsState()
-	m.loadPerms()
+
+	m.lists[screenApps].setRows(data.apps)
+	m.lists[screenCaches].setRows(data.caches)
+	m.lists[screenOrphans].setRows(data.orphans)
+	m.lists[screenLarge].setRows(data.large)
+
+	m.perms = permsState{consents: data.consents}
 	m.loadRoots()
 }
 
-func (m *Model) listApps(ctx context.Context, scanID string) []domain.App {
-	list, err := m.deps.appsService().List(ctx, scanID)
+func (m *Model) loadApps(ctx context.Context, scanID string, progress func(loadProgress)) ([]row, error) {
+	list, err := m.deps.appsService().ListWithProgress(ctx, scanID, func(p string) {
+		progress(loadProgress{Step: "aplicaciones", Current: p})
+	})
 	if err != nil {
-		m.setStatus(statusError, "apps: "+err.Error())
-		return nil
+		return nil, err
 	}
-	return list
+	return rowsFromApps(list), nil
 }
 
-func (m *Model) listCaches(ctx context.Context, scanID string) []domain.CacheEntry {
+func (m *Model) loadCaches(ctx context.Context, scanID string) ([]row, error) {
 	list, err := cache.New(m.deps.Store, m.deps.Home).List(ctx, scanID, "")
 	if err != nil {
-		m.setStatus(statusError, "caches: "+err.Error())
-		return nil
+		return nil, err
 	}
-	return list
+	return rowsFromCaches(list), nil
 }
 
-func (m *Model) listOrphans(ctx context.Context, scanID string) []domain.Orphan {
+func (m *Model) loadOrphans(ctx context.Context, scanID string, progress func(loadProgress)) ([]row, error) {
 	installed, complete := m.deps.appsService().InstalledBundleIDs(ctx)
 	list, err := orphan.New(m.deps.Store, m.deps.Policy, m.deps.Home).List(ctx, orphan.Options{
 		ScanID: scanID, Installed: installed, DiscoveryComplete: complete,
+		Progress: func(p string) {
+			progress(loadProgress{Step: "huérfanos", Current: p})
+		},
 	})
 	if err != nil {
-		m.setStatus(statusError, "orphans: "+err.Error())
-		return nil
+		return nil, err
 	}
-	return list
+	return rowsFromOrphans(list), nil
 }
 
-func (m *Model) listLarge(ctx context.Context, scanID string) []domain.LargeItem {
+func (m *Model) loadLarge(ctx context.Context, scanID string) ([]row, error) {
+	if scanID == "" {
+		return nil, nil // nothing is indexed yet
+	}
 	list, err := large.New(m.deps.Store, m.deps.LargeThreshold()).List(ctx, scanID, large.Options{})
 	if err != nil {
-		m.setStatus(statusError, "large: "+err.Error())
-		return nil
+		return nil, err
 	}
-	return list
+	return rowsFromLarge(list), nil
 }
 
 func (m *Model) setStatus(kind statusKind, text string) {
@@ -234,6 +434,22 @@ func (m *Model) textInputActive() bool {
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	k := msg.String()
+
+	if k == "ctrl+c" || (k == "q" && !m.textInputActive()) {
+		m.quitting = true
+		return m, tea.Quit
+	}
+
+	// While loading, only navigation and quit are accepted.
+	if m.loading {
+		switch k {
+		case "tab":
+			m.nextTab(1)
+		case "shift+tab":
+			m.nextTab(-1)
+		}
+		return m, nil
+	}
 
 	// A running scan reacts only to cancel/quit keys.
 	if m.scan.running {
@@ -261,9 +477,6 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch k {
-	case "ctrl+c", "q":
-		m.quitting = true
-		return m, tea.Quit
 	case "tab":
 		m.nextTab(1)
 		return m, nil
@@ -278,8 +491,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.screen {
 	case screenOverview:
 		if k == "r" {
-			m.reload()
-			m.setStatus(statusInfo, "refreshed")
+			m.setStatus(statusInfo, "recargando…")
+			return m, m.startLoad()
 		}
 	case screenApps, screenCaches, screenOrphans, screenLarge:
 		return m.handleListKey(m.lists[m.screen], k)
@@ -322,8 +535,8 @@ func (m *Model) handleListKey(l *listState, k string) (tea.Model, tea.Cmd) {
 	case "s":
 		l.toggleSort()
 	case "r":
-		m.reload()
-		m.setStatus(statusInfo, "refreshed")
+		m.setStatus(statusInfo, "recargando…")
+		return m, m.startLoad()
 	case "p":
 		return m.startPlan(l)
 	}
@@ -357,6 +570,12 @@ func (m *Model) View() string {
 	var b strings.Builder
 	b.WriteString(m.renderTabs() + "\n\n")
 
+	if m.loading {
+		b.WriteString(m.renderLoading())
+		b.WriteString("\n" + m.st.muted.Render(helpText(m.keys.Quit)))
+		return b.String()
+	}
+
 	bodyHeight := m.bodyHeight()
 	switch m.screen {
 	case screenOverview:
@@ -372,6 +591,21 @@ func (m *Model) View() string {
 	}
 
 	b.WriteString("\n" + m.renderStatus())
+	return b.String()
+}
+
+// renderLoading draws the startup loading indicator with the current step and
+// the directory being read (nothing is being scanned: the local index is read).
+func (m *Model) renderLoading() string {
+	var b strings.Builder
+	b.WriteString(m.st.title.Render("⏳ Cargando índice…") + "\n\n")
+	if m.loadStep != "" {
+		fmt.Fprintf(&b, "Paso: %s\n", render.Sanitize(m.loadStep))
+	}
+	if m.loadCurrent != "" {
+		b.WriteString("  " + m.st.muted.Render(render.Redact(m.loadCurrent, m.deps.Home, false)) + "\n")
+	}
+	b.WriteString("\n" + m.st.muted.Render("Leyendo el índice local; no se está escaneando el disco.") + "\n")
 	return b.String()
 }
 

@@ -50,5 +50,4 @@ Configuration can never downgrade a tier (SEC-ACC-03).
 Recorded consents
   (none)
 
-large: usage error: scan id is required
 ↑/k move up  ↓/j move down  x revoke consent  esc back/cancel  q quit

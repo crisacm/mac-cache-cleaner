@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -64,7 +65,7 @@ func testDeps(t *testing.T) (*Model, Deps) {
 	}
 	m := newModel(ctx, deps, lipgloss.NewRenderer(io.Discard))
 	m.width, m.height = 120, 40
-	m.reload()
+	m.loadSync()
 	return m, deps
 }
 
@@ -84,7 +85,7 @@ func (m *Model) runScan(t *testing.T, roots ...string) {
 	t.Helper()
 	_, err := m.deps.Scan.Run(m.ctx, scan.Options{Roots: roots})
 	require.NoError(t, err)
-	m.reload()
+	m.loadSync()
 }
 
 func keyMsg(s string) tea.KeyMsg {
@@ -375,4 +376,52 @@ func TestTabNavigation(t *testing.T) {
 		m.screen = s
 		require.NotEmpty(t, m.View())
 	}
+}
+
+func TestLoadingScreenAndAsyncInit(t *testing.T) {
+	m, _ := testDeps(t)
+
+	// Init must not block: it returns a command and enters the loading state.
+	cmd := m.Init()
+	require.NotNil(t, cmd)
+	require.True(t, m.loading, "the model starts in the loading state")
+
+	view := m.View()
+	require.Contains(t, view, "Cargando índice")
+	require.Contains(t, view, "no se está escaneando")
+
+	// A progress message updates the shown step and current directory.
+	m = apply(t, m, loadProgressMsg{p: loadProgress{Step: "huérfanos", Current: "/tmp/x"}})
+	require.Equal(t, "huérfanos", m.loadStep)
+	require.Contains(t, m.View(), "huérfanos")
+
+	// Completing the load leaves the loading state.
+	m = apply(t, m, loadedMsg{data: loadedData{}})
+	require.False(t, m.loading)
+	require.NotContains(t, m.View(), "Cargando índice")
+}
+
+// apply feeds a message to the model and returns it as *Model.
+func apply(t *testing.T, m *Model, msg tea.Msg) *Model {
+	t.Helper()
+	next, _ := m.Update(msg)
+	mm, ok := next.(*Model)
+	require.True(t, ok, "the root model must stay *Model")
+	return mm
+}
+
+func TestLoadDataReportsProgress(t *testing.T) {
+	m, _ := testDeps(t)
+	var mu sync.Mutex
+	var steps []string
+	data, err := m.loadData(func(p loadProgress) {
+		mu.Lock()
+		steps = append(steps, p.Step)
+		mu.Unlock()
+	})
+	require.NoError(t, err)
+	require.Contains(t, steps, "totales")
+	require.Contains(t, steps, "aplicaciones")
+	require.Contains(t, steps, "listo")
+	require.Empty(t, data.errs)
 }

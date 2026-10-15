@@ -60,6 +60,9 @@ type Options struct {
 	DiscoveryReason string
 	// MinConfidence filters results (empty means all).
 	MinConfidence domain.Confidence
+	// Progress, when set, receives the path currently being read (for a
+	// loading indicator). It must not block.
+	Progress func(string)
 }
 
 // List returns detected orphans, most confident first then largest.
@@ -70,8 +73,14 @@ func (s *Service) List(ctx context.Context, opts Options) ([]domain.Orphan, erro
 	}
 
 	var out []domain.Orphan
+	report := func(p string) {
+		if opts.Progress != nil {
+			opts.Progress(p)
+		}
+	}
 	for _, rel := range candidateLocations {
 		locPath := filepath.Join(s.home, rel)
+		report(locPath)
 		des, err := os.ReadDir(locPath)
 		if err != nil {
 			continue // location missing or unreadable
@@ -85,6 +94,7 @@ func (s *Service) List(ctx context.Context, opts Options) ([]domain.Orphan, erro
 				continue
 			}
 			full := filepath.Join(locPath, de.Name())
+			report(full)
 			if s.p != nil && s.p.PathVerdict(s.home, full).Blocked() {
 				continue
 			}
