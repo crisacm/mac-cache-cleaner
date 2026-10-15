@@ -49,6 +49,19 @@ through `internal/policy`; the TUI never duplicates or bypasses it
   goroutines.
 - **T-9** Tests are message-driven (`Update`) with golden `View` output, using
   fakes and `t.TempDir()`; the real home is never touched.
+- **T-10** Startup does not block: the first frame appears immediately with a
+  loading indicator that reports the current step and the directory being read.
+  Data loads asynchronously (and in parallel) so the UI stays responsive.
+- **T-11** Cache, Orphans and Large lists are trees: `→`/`l` expands a directory
+  (or enters it), `←`/`h` collapses it (or returns to the parent); children load
+  lazily from the index; nested items can be selected by `entry_id`. A package
+  is never expanded; loading is capped (500 children).
+- **T-12** `f` toggles between showing only directories and all elements inside
+  expanded folders. Top-level rows are always shown.
+- **T-13** A directory and its own contents cannot be selected at the same time
+  (avoids planning/moving the same bytes twice).
+- **T-14** The cleanup flow only ever moves items to the Trash; there is no
+  permanent-delete path (SEC-DEL-04).
 
 ## Service reuse (also the future MCP surface)
 

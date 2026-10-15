@@ -63,7 +63,16 @@ Los comandos de lectura aceptan `--json` y `--no-color`.
 Requiere una terminal. Reutiliza los mismos servicios que la CLI y **no decide accesos por su cuenta** (todo pasa por `internal/policy`).
 
 - **Overview**: totales, última vez escaneada y aviso de resultado parcial.
-- **Apps / Caches / Orphans / Large**: listas ordenables (`s`) y filtrables (`/`), con clase de dato y, en huérfanos, nivel de confianza.
+- **Carga inicial**: la primera pantalla aparece al instante con un indicador
+  "Cargando índice…" que muestra el paso actual y el directorio que se está
+  leyendo en tiempo real; los datos se cargan en segundo plano y en paralelo.
+- **Apps / Caches / Orphans / Large**: listas ordenables (`s`) y filtrables (`/`),
+  con clase de dato y, en huérfanos, nivel de confianza. Caches, Orphans y Large
+  son **árboles**: `→`/`l` despliega un directorio (o entra en él), `←`/`h` lo
+  pliega (o vuelve al padre), y los hijos se cargan bajo demanda desde el índice.
+  `f` alterna entre mostrar solo directorios o todos los elementos dentro de las
+  carpetas desplegadas. No se puede seleccionar a la vez un directorio y algo
+  dentro de él.
 - **Scan**: muestra primero las raíces efectivas y su veredicto (incluir / requiere consentimiento / omitida); escanea con progreso y se cancela con `Esc` (el índice parcial se revierte). Los niveles 1 y 3 requieren consentimiento ya registrado; `g` abre la confirmación que **nombra la raíz** y exige escribir `grant`.
 - **Limpieza**: selecciona ítems (`espacio`) → `p` crea el plan (dry-run) → pantalla de revisión (cantidad, tamaño total, avisos "puede contener datos del usuario") → `c` y escribir la **cantidad exacta** para aplicar. Todo se mueve a la **Papelera**; no existe borrado permanente.
 - **Permissions**: tabla de política efectiva y consentimientos registrados; `x` revoca el seleccionado.

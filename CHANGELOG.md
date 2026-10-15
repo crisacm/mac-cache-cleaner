@@ -9,6 +9,16 @@ y este proyecto se adhiere a [Versionado Semántico](https://semver.org/lang/es/
 
 ### Añadido
 
+- **Arranque de la TUI**: la primera pantalla aparece de inmediato con un
+  indicador "Cargando índice…" (paso actual + directorio en lectura, en tiempo
+  real); los datos se cargan en segundo plano y en paralelo
+  (`apps.ListWithProgress`, `orphan.Options.Progress`).
+- **Árbol en la TUI**: Caches/Orphans/Large se navegan como árbol con `→`/`l`
+  (desplegar o entrar) y `←`/`h` (plegar o subir al padre); los hijos se cargan
+  bajo demanda desde el índice (`store.EntriesByParent`), con tope de 500 y
+  "… y N más". No se pueden seleccionar a la vez un directorio y algo dentro.
+- **Toggle `f` en la TUI**: alterna entre mostrar solo directorios o también los
+  archivos dentro de las carpetas desplegadas (por defecto solo directorios).
 - Bootstrap del proyecto: módulo Go, esqueleto de paquetes según `AGENTS.md` §3
   (`domain`, `policy`, `scanner`, `apps`, `cache`, `orphan`, `large`, `store`,
   `cleaner`, `platform`, `config`, `cli`), `Makefile` (`fmt`, `lint`, `vuln`,
@@ -118,6 +128,9 @@ y este proyecto se adhiere a [Versionado Semántico](https://semver.org/lang/es/
   cascada, de modo que el escaneo completo anterior sigue siendo el vigente.
 - Los `fixtures` se generan en `t.TempDir()`; los *golden files* viven en
   `internal/cli/testdata/` y `internal/tui/testdata/`.
+- La selección en el árbol impide marcar a la vez un directorio y algo dentro de
+  él: al seleccionar un directorio se deseleccionan sus descendientes y no se
+  permite seleccionar un hijo mientras un ancestro esté marcado.
 - Respecto al esquema del `README.md`, el índice añade `dev`/`inode` a `entries`
   (necesarios para deduplicar hardlinks y revalidar en `apply`), estado
   (`finished_at`, `full`, `partial`) a `scans`, la tabla `inaccessible` para

@@ -98,6 +98,15 @@ mcc tui                                # phase 2
 - Human output goes to stdout; logs/diagnostics go to stderr.
 - Exit codes: `0` success, `1` generic error, `2` usage error, `3` partial result (inaccessible paths), `4` blocked by policy / consent required.
 
+**`mcc tui` (Phase 2)** reuses the same services and contains no logic of its own:
+
+- Startup never blocks: a loading screen shows the current step and the directory being read; data loads in the background and in parallel.
+- Caches/Orphans/Large are trees: `→`/`l` expands or enters, `←`/`h` collapses or returns to the parent; children load lazily from the index (capped). `f` toggles showing only directories vs. all elements inside expanded folders.
+- Selecting a directory and something inside it at once is prevented.
+- Scan shows the effective roots with their verdicts; `Esc` cancels and rolls back. Consent needs an interactive, root-naming confirmation.
+- Cleanup is select -> plan review -> typed item count -> apply, and only ever **moves to the Trash** (no permanent delete).
+- All names are sanitized before rendering.
+
 ## 5. Disk-Usage Correctness (critical)
 
 1. Size on disk = `st_blocks * 512`, **not** `st_size`. Store both (`allocated_bytes`, `logical_bytes`).
