@@ -106,9 +106,9 @@ func newModel(ctx context.Context, deps Deps, r *lipgloss.Renderer) *Model {
 		lists: map[screen]*listState{},
 	}
 	m.lists[screenApps] = newListState("Applications")
-	m.lists[screenCaches] = newListState("Caches")
-	m.lists[screenOrphans] = newListState("Orphans")
-	m.lists[screenLarge] = newListState("Large items")
+	m.lists[screenCaches] = newTreeState("Caches")
+	m.lists[screenOrphans] = newTreeState("Orphans")
+	m.lists[screenLarge] = newTreeState("Large items")
 	m.scan = newScanState(deps)
 	m.clean = newCleanState()
 	m.perms = newPermsState()
@@ -523,8 +523,22 @@ func (m *Model) handleListKey(l *listState, k string) (tea.Model, tea.Cmd) {
 		l.move(-1)
 	case "down", "j":
 		l.move(1)
+	case "right", "l":
+		return m.expandOrEnter(l)
+	case "left", "h":
+		return m.collapseOrLeave(l)
+	case "f":
+		l.showFiles = !l.showFiles
+		l.flatten()
+		if l.showFiles {
+			m.setStatus(statusInfo, "mostrando archivos y directorios")
+		} else {
+			m.setStatus(statusInfo, "mostrando solo directorios")
+		}
 	case " ":
-		l.toggle()
+		if ok, reason := l.toggle(); !ok && reason != "" {
+			m.setStatus(statusWarn, reason)
+		}
 	case "a":
 		l.selectAll()
 	case "n":
@@ -543,6 +557,87 @@ func (m *Model) handleListKey(l *listState, k string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// expandOrEnter expands the current directory, or moves into it when it is
+// already expanded.
+func (m *Model) expandOrEnter(l *listState) (tea.Model, tea.Cmd) {
+	n, ok := l.current()
+	if !ok || !n.row.canExpand {
+		return m, nil
+	}
+	if !n.expanded {
+		m.expand(l, n)
+		return m, nil
+	}
+	if len(l.visibleChildren(n)) > 0 {
+		l.move(1)
+	}
+	return m, nil
+}
+
+// collapseOrLeave collapses the current directory, or moves to its parent.
+func (m *Model) collapseOrLeave(l *listState) (tea.Model, tea.Cmd) {
+	n, ok := l.current()
+	if !ok {
+		return m, nil
+	}
+	if n.expanded {
+		n.expanded = false
+		l.flatten()
+		return m, nil
+	}
+	if n.parent != nil {
+		parent := n.parent
+		l.flatten()
+		for i, v := range l.visible {
+			if v == parent {
+				l.cursor = i
+				break
+			}
+		}
+	}
+	return m, nil
+}
+
+// maxChildren caps how many children are loaded for one directory.
+const maxChildren = 500
+
+// expand loads a directory's children from the index (lazily).
+func (m *Model) expand(l *listState, n *treeNode) {
+	if n.loaded {
+		n.expanded = true
+		l.flatten()
+		return
+	}
+	if !m.hasScan {
+		m.setStatus(statusWarn, "no hay índice: ejecuta un escaneo en la pestaña Scan")
+		return
+	}
+	entries, err := m.deps.Store.EntriesByParent(m.ctx, m.latestScan.ID, n.row.path)
+	if err != nil {
+		l.err = err.Error()
+		return
+	}
+	l.err = ""
+	extra := 0
+	if len(entries) > maxChildren {
+		extra = len(entries) - maxChildren
+		entries = entries[:maxChildren]
+	}
+	for _, e := range entries {
+		n.children = append(n.children, &treeNode{row: rowFromEntry(e), depth: n.depth + 1, parent: n})
+	}
+	if extra > 0 {
+		n.children = append(n.children, &treeNode{
+			row:    row{title: fmt.Sprintf("… y %d más", extra), meta: "truncado", filler: true},
+			depth:  n.depth + 1,
+			parent: n,
+		})
+	}
+	n.loaded = true
+	n.expanded = true
+	l.flatten()
+}
+
 func (m *Model) handleFilterInput(l *listState, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEsc:
@@ -554,10 +649,10 @@ func (m *Model) handleFilterInput(l *listState, msg tea.KeyMsg) (tea.Model, tea.
 		if len(l.filter) > 0 {
 			l.filter = l.filter[:len(l.filter)-1]
 		}
-		l.applyFilter()
+		l.flatten()
 	case tea.KeyRunes, tea.KeySpace:
 		l.filter += string(msg.Runes)
-		l.applyFilter()
+		l.flatten()
 	}
 	return m, nil
 }
@@ -652,7 +747,7 @@ func (m *Model) renderStatus() string {
 func (m *Model) footerHelp() string {
 	switch m.screen {
 	case screenApps, screenCaches, screenOrphans, screenLarge:
-		return helpText(m.keys.Up, m.keys.Down, m.keys.Select, m.keys.Plan, m.keys.Filter, m.keys.Sort, m.keys.Tab, m.keys.Quit)
+		return helpText(m.keys.Up, m.keys.Down, m.keys.Expand, m.keys.Collapse, m.keys.Files, m.keys.Select, m.keys.Plan, m.keys.Filter, m.keys.Sort, m.keys.Tab, m.keys.Quit)
 	case screenScan:
 		return helpText(m.keys.Confirm, m.keys.Back, m.keys.Quit)
 	case screenClean:

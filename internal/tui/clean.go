@@ -58,8 +58,9 @@ func (m *Model) startPlan(l *listState) (tea.Model, tea.Cmd) {
 	}
 
 	var candidates []cleaner.Candidate
-	for _, r := range l.rows {
-		if !l.selected[r.entryID] || r.entryID == "" {
+	for _, n := range l.allNodes() {
+		r := n.row
+		if !l.selected[r.entryID] || r.entryID == "" || r.filler {
 			continue
 		}
 		entry, err := m.deps.Store.EntryByID(ctx, r.entryID)

@@ -33,21 +33,42 @@ type row struct {
 	class      domain.DataClass
 	confidence domain.Confidence
 	entryID    string
+	isDir      bool
+	canExpand  bool
+	// filler marks a non-selectable placeholder row (e.g. "… and N more").
+	filler bool
 }
 
 // selectable reports whether the row may be added to a plan. user_file and
 // application are report-only (SEC-DEL-03).
-func (r row) selectable() bool { return !r.class.ReportOnly() }
+func (r row) selectable() bool { return !r.filler && !r.class.ReportOnly() }
 
-// listState is the shared state for the Apps/Caches/Orphans/Large screens.
+// treeNode is a row plus its place in the tree.
+type treeNode struct {
+	row      row
+	depth    int
+	parent   *treeNode
+	children []*treeNode
+	loaded   bool
+	expanded bool
+}
+
+// listState is the shared state for the list screens. Screens whose rows are
+// directories (caches/orphans/large) use the tree behaviour (expand/collapse);
+// others stay flat.
 type listState struct {
-	title     string
-	rows      []row
-	order     []int
+	title string
+	tree  bool
+
+	roots     []*treeNode
+	visible   []*treeNode
 	cursor    int
 	filter    string
 	filtering bool
 	sortBy    sortMode
+	// showFiles, when false, hides non-directory children inside expanded
+	// folders (top-level rows are always shown).
+	showFiles bool
 	selected  map[string]bool
 	err       string
 }
@@ -56,74 +77,157 @@ func newListState(title string) *listState {
 	return &listState{title: title, selected: map[string]bool{}}
 }
 
-func (l *listState) setRows(rows []row) {
-	l.rows = rows
-	l.order = nil
-	l.cursor = 0
-	l.applyFilter()
+func newTreeState(title string) *listState {
+	return &listState{title: title, tree: true, selected: map[string]bool{}}
 }
 
-func (l *listState) applyFilter() {
-	l.order = l.order[:0]
+func (l *listState) setRows(rows []row) {
+	l.roots = make([]*treeNode, 0, len(rows))
+	for _, r := range rows {
+		l.roots = append(l.roots, &treeNode{row: r, depth: 0})
+	}
+	l.cursor = 0
+	l.flatten()
+}
+
+// flatten recomputes the visible node list from expansion, filter and sort.
+func (l *listState) flatten() {
 	needle := strings.ToLower(l.filter)
-	for i, r := range l.rows {
-		if needle != "" && !strings.Contains(strings.ToLower(r.title+" "+r.meta+" "+r.path), needle) {
+	l.visible = l.visible[:0]
+
+	var visit func(n *treeNode, force bool)
+	visit = func(n *treeNode, force bool) {
+		matches := force || needle == "" || l.subtreeMatches(n, needle)
+		if !matches {
+			return
+		}
+		l.visible = append(l.visible, n)
+		// Auto-expand when filtering so nested matches are reachable.
+		expand := n.expanded || (needle != "" && l.tree)
+		if !expand {
+			return
+		}
+		children := l.visibleChildren(n)
+		for _, c := range children {
+			visit(c, needle != "")
+		}
+	}
+
+	roots := make([]*treeNode, len(l.roots))
+	copy(roots, l.roots)
+	sort.SliceStable(roots, func(a, b int) bool { return l.less(roots[a].row, roots[b].row) })
+	for _, n := range roots {
+		visit(n, false)
+	}
+
+	if l.cursor >= len(l.visible) {
+		l.cursor = max(0, len(l.visible)-1)
+	}
+}
+
+// visibleChildren returns a node's children honoring expansion, the
+// show-files toggle and sorting.
+func (l *listState) visibleChildren(n *treeNode) []*treeNode {
+	if !n.loaded || !n.expanded {
+		return nil
+	}
+	kids := make([]*treeNode, 0, len(n.children))
+	for _, c := range n.children {
+		if !l.showFiles && !c.row.isDir {
 			continue
 		}
-		l.order = append(l.order, i)
+		kids = append(kids, c)
 	}
-	sort.SliceStable(l.order, func(a, b int) bool {
-		ra, rb := l.rows[l.order[a]], l.rows[l.order[b]]
-		if l.sortBy == sortByName {
-			return ra.title < rb.title
-		}
-		if ra.size != rb.size {
-			return ra.size > rb.size
-		}
-		return ra.title < rb.title
-	})
-	if l.cursor >= len(l.order) {
-		l.cursor = max(0, len(l.order)-1)
-	}
+	sort.SliceStable(kids, func(a, b int) bool { return l.less(kids[a].row, kids[b].row) })
+	return kids
 }
 
-func (l *listState) current() (row, bool) {
-	if len(l.order) == 0 {
-		return row{}, false
+func (l *listState) less(a, b row) bool {
+	if l.sortBy == sortByName {
+		return a.title < b.title
 	}
-	return l.rows[l.order[l.cursor]], true
+	if a.size != b.size {
+		return a.size > b.size
+	}
+	return a.title < b.title
+}
+
+func (l *listState) subtreeMatches(n *treeNode, needle string) bool {
+	if strings.Contains(strings.ToLower(n.row.title+" "+n.row.meta+" "+n.row.path), needle) {
+		return true
+	}
+	for _, c := range n.children {
+		if l.subtreeMatches(c, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func (l *listState) current() (*treeNode, bool) {
+	if len(l.visible) == 0 {
+		return nil, false
+	}
+	return l.visible[l.cursor], true
 }
 
 func (l *listState) move(delta int) {
-	if len(l.order) == 0 {
+	if len(l.visible) == 0 {
 		return
 	}
 	l.cursor += delta
 	if l.cursor < 0 {
 		l.cursor = 0
 	}
-	if l.cursor >= len(l.order) {
-		l.cursor = len(l.order) - 1
+	if l.cursor >= len(l.visible) {
+		l.cursor = len(l.visible) - 1
 	}
 }
 
-func (l *listState) toggle() {
-	r, ok := l.current()
-	if !ok || !r.selectable() || r.entryID == "" {
-		return
+// toggle selects or deselects the current node. A node may not be selected
+// while an ancestor is selected (SEC-DEL: avoid planning a directory and its
+// own contents twice).
+func (l *listState) toggle() (ok bool, reason string) {
+	n, found := l.current()
+	if !found {
+		return false, ""
+	}
+	r := n.row
+	if !r.selectable() || r.entryID == "" {
+		return false, "este ítem es de solo reporte"
 	}
 	if l.selected[r.entryID] {
 		delete(l.selected, r.entryID)
-		return
+		return true, ""
+	}
+	for p := n.parent; p != nil; p = p.parent {
+		if l.selected[p.row.entryID] {
+			return false, "ya hay un directorio padre seleccionado"
+		}
+	}
+	// Selecting a directory drops any selected descendants.
+	for _, d := range descendants(n) {
+		delete(l.selected, d.row.entryID)
 	}
 	l.selected[r.entryID] = true
+	return true, ""
 }
 
+func descendants(n *treeNode) []*treeNode {
+	var out []*treeNode
+	for _, c := range n.children {
+		out = append(out, c)
+		out = append(out, descendants(c)...)
+	}
+	return out
+}
+
+// selectAll selects the selectable top-level rows only (keeps the
+// no-ancestor-and-descendant rule trivially true).
 func (l *listState) selectAll() {
-	for _, i := range l.order {
-		r := l.rows[i]
-		if r.selectable() && r.entryID != "" {
-			l.selected[r.entryID] = true
+	for _, n := range l.roots {
+		if n.row.selectable() && n.row.entryID != "" {
+			l.selected[n.row.entryID] = true
 		}
 	}
 }
@@ -136,14 +240,37 @@ func (l *listState) toggleSort() {
 	} else {
 		l.sortBy = sortBySize
 	}
-	l.applyFilter()
+	l.flatten()
+}
+
+// allNodes returns every node known to the list (roots plus loaded children).
+func (l *listState) allNodes() []*treeNode {
+	var out []*treeNode
+	var walk func(n *treeNode)
+	walk = func(n *treeNode) {
+		out = append(out, n)
+		for _, c := range n.children {
+			walk(c)
+		}
+	}
+	for _, n := range l.roots {
+		walk(n)
+	}
+	return out
 }
 
 // render lists the visible rows.
 func (l *listState) render(st styles, height int) string {
 	var b strings.Builder
 	header := fmt.Sprintf("%s  (%d items, %d selected, sort: %s)",
-		st.title.Render(render.Sanitize(l.title)), len(l.order), len(l.selected), l.sortBy)
+		st.title.Render(render.Sanitize(l.title)), len(l.visible), len(l.selected), l.sortBy)
+	if l.tree {
+		state := "solo directorios"
+		if l.showFiles {
+			state = "todos los elementos"
+		}
+		header += "  ·  " + state
+	}
 	b.WriteString(header + "\n")
 	if l.filtering || l.filter != "" {
 		b.WriteString(st.muted.Render("filter: ") + render.Sanitize(l.filter) + "\n")
@@ -151,7 +278,7 @@ func (l *listState) render(st styles, height int) string {
 	if l.err != "" {
 		b.WriteString(st.bad.Render("error: ") + render.Sanitize(l.err) + "\n")
 	}
-	if len(l.order) == 0 {
+	if len(l.visible) == 0 {
 		b.WriteString(st.muted.Render("  (nothing to show)") + "\n")
 		return b.String()
 	}
@@ -160,24 +287,34 @@ func (l *listState) render(st styles, height int) string {
 	if l.cursor >= height {
 		start = l.cursor - height + 1
 	}
-	end := min(len(l.order), start+height)
+	end := min(len(l.visible), start+height)
 	for i := start; i < end; i++ {
-		r := l.rows[l.order[i]]
+		n := l.visible[i]
 		marker := "[ ]"
 		switch {
-		case !r.selectable():
+		case !n.row.selectable():
 			marker = " - "
-		case l.selected[r.entryID]:
+		case l.selected[n.row.entryID]:
 			marker = "[x]"
+		}
+		chevron := "  "
+		if l.tree && n.row.canExpand {
+			if n.expanded {
+				chevron = "v "
+			} else {
+				chevron = "> "
+			}
 		}
 		cursor := "  "
 		if i == l.cursor {
 			cursor = "> "
 		}
-		line := fmt.Sprintf("%s%s %-28s %10s  %-18s %s",
-			cursor, marker, truncate(r.title, 28), render.FormatBytes(r.size),
-			render.Sanitize(string(r.class)), render.Sanitize(r.path))
-		if l.selected[r.entryID] {
+		indent := strings.Repeat("  ", n.depth)
+		title := truncate(n.row.title, max(8, 28-n.depth*2))
+		line := fmt.Sprintf("%s%s%s%s %-24s %10s  %-18s %s",
+			cursor, indent, chevron, marker, title, render.FormatBytes(n.row.size),
+			render.Sanitize(string(n.row.class)), render.Sanitize(n.row.path))
+		if l.selected[n.row.entryID] {
 			line = st.selected.Render(line)
 		}
 		b.WriteString(line + "\n")
@@ -195,8 +332,21 @@ func truncate(s string, n int) string {
 	return s[:n-1] + "…"
 }
 
-// rowsFromApps, rowsFromCaches, rowsFromOrphans, rowsFromLarge build rows from
-// service results, sanitizing untrusted text.
+// --- row builders ------------------------------------------------------
+
+func rowFromEntry(e domain.Entry) row {
+	return row{
+		title:     render.Sanitize(lastSegment(e.Path)),
+		meta:      string(e.Kind),
+		path:      e.Path,
+		size:      e.AllocatedBytes,
+		class:     e.DataClass,
+		entryID:   e.EntryID,
+		isDir:     e.IsDir,
+		canExpand: e.IsDir && e.Kind != domain.KindPackage,
+	}
+}
+
 func rowsFromApps(apps []domain.App) []row {
 	out := make([]row, 0, len(apps))
 	for _, a := range apps {
@@ -206,7 +356,7 @@ func rowsFromApps(apps []domain.App) []row {
 			path:    a.Path,
 			size:    a.AllocatedBytes,
 			class:   domain.ClassApplication,
-			entryID: domain.ComputeEntryID("", a.Path),
+			entryID: "", // applications are report-only
 		})
 	}
 	return out
@@ -216,12 +366,14 @@ func rowsFromCaches(caches []domain.CacheEntry) []row {
 	out := make([]row, 0, len(caches))
 	for _, c := range caches {
 		out = append(out, row{
-			title:   render.Sanitize(c.Name),
-			meta:    render.Sanitize(c.AppID),
-			path:    c.Path,
-			size:    c.AllocatedBytes,
-			class:   c.DataClass,
-			entryID: c.EntryID,
+			title:     render.Sanitize(c.Name),
+			meta:      render.Sanitize(c.AppID),
+			path:      c.Path,
+			size:      c.AllocatedBytes,
+			class:     c.DataClass,
+			entryID:   c.EntryID,
+			isDir:     true,
+			canExpand: true,
 		})
 	}
 	return out
@@ -238,6 +390,8 @@ func rowsFromOrphans(orphans []domain.Orphan) []row {
 			class:      o.DataClass,
 			confidence: o.Confidence,
 			entryID:    o.EntryID,
+			isDir:      true,
+			canExpand:  true,
 		})
 	}
 	return out
@@ -247,12 +401,14 @@ func rowsFromLarge(items []domain.LargeItem) []row {
 	out := make([]row, 0, len(items))
 	for _, it := range items {
 		out = append(out, row{
-			title:   render.Sanitize(lastSegment(it.Path)),
-			meta:    string(it.Kind),
-			path:    it.Path,
-			size:    it.AllocatedBytes,
-			class:   it.DataClass,
-			entryID: it.EntryID,
+			title:     render.Sanitize(lastSegment(it.Path)),
+			meta:      string(it.Kind),
+			path:      it.Path,
+			size:      it.AllocatedBytes,
+			class:     it.DataClass,
+			entryID:   it.EntryID,
+			isDir:     it.IsDir,
+			canExpand: it.IsDir && it.Kind != domain.KindPackage,
 		})
 	}
 	return out

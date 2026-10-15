@@ -137,7 +137,7 @@ func TestReportOnlyRowsAreNotSelectable(t *testing.T) {
 
 	// Toggling a report-only row does nothing.
 	l.cursor = indexOf(l, "e3")
-	l.toggle()
+	_, _ = l.toggle()
 	require.False(t, l.selected["e3"])
 
 	// Report-only rows render with a non-selectable marker.
@@ -145,8 +145,8 @@ func TestReportOnlyRowsAreNotSelectable(t *testing.T) {
 }
 
 func indexOf(l *listState, entryID string) int {
-	for i, idx := range l.order {
-		if l.rows[idx].entryID == entryID {
+	for i, n := range l.visible {
+		if n.row.entryID == entryID {
 			return i
 		}
 	}
@@ -302,11 +302,11 @@ func TestPermissionsScreenGolden(t *testing.T) {
 
 // selectByTitle moves the cursor to a row and toggles it.
 func selectByTitle(_ *Model, l *listState, title string) bool {
-	for i, idx := range l.order {
-		if l.rows[idx].title == title {
+	for i, n := range l.visible {
+		if n.row.title == title {
 			l.cursor = i
-			l.toggle()
-			return true
+			ok, _ := l.toggle()
+			return ok
 		}
 	}
 	return false
@@ -424,4 +424,112 @@ func TestLoadDataReportsProgress(t *testing.T) {
 	require.Contains(t, steps, "aplicaciones")
 	require.Contains(t, steps, "listo")
 	require.Empty(t, data.errs)
+}
+
+// focusTitle moves the cursor to a visible node by title (without selecting).
+func focusTitle(l *listState, title string) bool {
+	for i, n := range l.visible {
+		if n.row.title == title {
+			l.cursor = i
+			return true
+		}
+	}
+	return false
+}
+
+func treeFixture(t *testing.T) (*Model, *listState) {
+	t.Helper()
+	m, deps := testDeps(t)
+	m.runScan(t, filepath.Join(deps.Home, "Library", "Caches"))
+	m.screen = screenCaches
+	l := m.lists[screenCaches]
+	require.True(t, focusTitle(l, "Caches"), "the Caches location must be listed")
+	return m, l
+}
+
+func TestTreeExpandCollapseWithArrows(t *testing.T) {
+	m, l := treeFixture(t)
+
+	// Right expands the root and loads its children from the index.
+	require.False(t, l.roots[0].expanded)
+	m = apply(t, m, keyMsg("right"))
+	require.True(t, l.roots[0].expanded)
+	require.Contains(t, titles(l), "com.example", "children must be loaded")
+
+	// Left collapses it.
+	m = apply(t, m, keyMsg("left"))
+	require.False(t, l.roots[0].expanded)
+	require.NotContains(t, titles(l), "com.example")
+
+	// Right again expands, then right enters the first child.
+	m = apply(t, m, keyMsg("right"))
+	m = apply(t, m, keyMsg("right"))
+	n, _ := l.current()
+	require.NotEqual(t, 0, n.depth, "the second right must move into the child")
+
+	// Left on a child returns to its parent.
+	_ = apply(t, m, keyMsg("left"))
+	n, _ = l.current()
+	require.Equal(t, 0, n.depth, "left must return to the parent")
+}
+
+func titles(l *listState) []string {
+	out := make([]string, 0, len(l.visible))
+	for _, n := range l.visible {
+		out = append(out, n.row.title)
+	}
+	return out
+}
+
+func TestTreeShowFilesToggle(t *testing.T) {
+	m, l := treeFixture(t)
+	// Expand Caches, then com.example (which contains data.bin, a file).
+	m = apply(t, m, keyMsg("right"))
+	require.True(t, focusTitle(l, "com.example"))
+	m = apply(t, m, keyMsg("right"))
+	require.NotContains(t, titles(l), "data.bin", "files are hidden by default")
+
+	// `f` shows all elements.
+	m = apply(t, m, keyMsg("f"))
+	require.True(t, l.showFiles)
+	require.Contains(t, titles(l), "data.bin")
+
+	// `f` again hides non-directories.
+	_ = apply(t, m, keyMsg("f"))
+	require.False(t, l.showFiles)
+	require.NotContains(t, titles(l), "data.bin")
+}
+
+func TestTreeNoAncestorAndDescendantSelection(t *testing.T) {
+	m, l := treeFixture(t)
+	m = apply(t, m, keyMsg("right")) // expand Caches
+
+	// Select a child.
+	require.True(t, focusTitle(l, "com.example"))
+	m = apply(t, m, keyMsg(" "))
+	childID := l.visible[l.cursor].row.entryID
+	require.True(t, l.selected[childID])
+
+	// Selecting the parent is allowed and drops selected descendants.
+	require.True(t, focusTitle(l, "Caches"))
+	m = apply(t, m, keyMsg(" "))
+	rootID := l.visible[l.cursor].row.entryID
+	require.True(t, l.selected[rootID])
+	require.False(t, l.selected[childID], "selecting a parent must drop selected descendants")
+
+	// Selecting a child while its parent is selected is refused.
+	require.True(t, focusTitle(l, "com.example"))
+	m = apply(t, m, keyMsg(" "))
+	require.False(t, l.selected[childID])
+	require.Contains(t, m.status, "padre")
+}
+
+func TestTreeExpandWithoutScanIsSafe(t *testing.T) {
+	m, _ := testDeps(t) // no scan
+	m.screen = screenCaches
+	l := m.lists[screenCaches]
+	if len(l.visible) > 0 {
+		m = apply(t, m, keyMsg("right"))
+	}
+	require.Contains(t, m.status, "no hay índice")
 }

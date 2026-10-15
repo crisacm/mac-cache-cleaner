@@ -47,6 +47,9 @@ type keyMap struct {
 	ClearSel    key.Binding
 	Filter      key.Binding
 	Sort        key.Binding
+	Expand      key.Binding
+	Collapse    key.Binding
+	Files       key.Binding
 	Plan        key.Binding
 	Refresh     key.Binding
 	Confirm     key.Binding
@@ -66,6 +69,9 @@ func defaultKeys() keyMap {
 		ClearSel:    key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "clear selection")),
 		Filter:      key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter")),
 		Sort:        key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
+		Expand:      key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→", "expand")),
+		Collapse:    key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←", "collapse")),
+		Files:       key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "files/dirs")),
 		Plan:        key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "plan selected")),
 		Refresh:     key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 		Confirm:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "confirm")),
