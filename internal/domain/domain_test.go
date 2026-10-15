@@ -75,3 +75,10 @@ func TestConsentActive(t *testing.T) {
 	require.True(t, Consent{GrantedAt: base}.Active(base))
 	require.False(t, Consent{GrantedAt: base, RevokedAt: base}.Active(base))
 }
+
+func TestEligibility(t *testing.T) {
+	require.Equal(t, EligibilityAuto, ClassRegenerableCache.Eligibility())
+	require.Equal(t, EligibilityExplicitSelection, ClassAppData.Eligibility())
+	require.Equal(t, EligibilityReportOnly, ClassUserFile.Eligibility())
+	require.Equal(t, EligibilityReportOnly, ClassApplication.Eligibility())
+}
