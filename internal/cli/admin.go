@@ -361,8 +361,8 @@ func (a *App) dataShow(ctx context.Context, cmd *cobra.Command) error {
 	fmt.Fprintf(a.Out, "Storage directory: %s\n", render.Redact(info.Dir, a.Home, false))
 	fmt.Fprintf(a.Out, "Database:          %s\n", render.Redact(info.Path, a.Home, false))
 	fmt.Fprintf(a.Out, "Database size:     %s\n", render.FormatBytes(info.SizeBytes))
-	fmt.Fprintf(a.Out, "Scans: %d, entries: %d, plans: %d, consents: %d, audit records: %d\n",
-		info.Scans, info.Entries, info.Plans, info.Consents, info.Audit)
+	fmt.Fprintf(a.Out, "Scans: %d, entries: %d, plans: %d, consents: %d, audit records: %d, MCP calls: %d\n",
+		info.Scans, info.Entries, info.Plans, info.Consents, info.Audit, info.MCPCalls)
 	fmt.Fprintln(a.Out, "Nothing else is stored; no file contents and no telemetry.")
 	return nil
 }

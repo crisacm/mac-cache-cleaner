@@ -325,3 +325,24 @@ func TestDeleteScanCascades(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, inc)
 }
+
+func TestMCPCallAudit(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t)
+	require.NoError(t, s.AppendMCPCall(ctx, domain.MCPCall{
+		At: time.Now(), Tool: "mcc_list_caches", ArgsSummary: "page_size=50", Status: "ok", DurationMS: 3, ItemCount: 5,
+	}))
+	calls, err := s.MCPCalls(ctx, 10)
+	require.NoError(t, err)
+	require.Len(t, calls, 1)
+	require.Equal(t, "mcc_list_caches", calls[0].Tool)
+
+	info, err := s.Info(ctx)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, info.MCPCalls)
+
+	require.NoError(t, s.Purge(ctx))
+	info, err = s.Info(ctx)
+	require.NoError(t, err)
+	require.Zero(t, info.MCPCalls, "purge must clear the mcp audit")
+}

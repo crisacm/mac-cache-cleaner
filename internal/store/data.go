@@ -15,6 +15,7 @@ type DataInfo struct {
 	Plans    int64  `json:"plans"`
 	Consents int64  `json:"consents"`
 	Audit    int64  `json:"audit"`
+	MCPCalls int64  `json:"mcp_calls"`
 
 	// SizeBytes is the size of the database file on disk.
 	SizeBytes int64 `json:"size_bytes"`
@@ -32,6 +33,7 @@ func (s *Store) Info(ctx context.Context) (DataInfo, error) {
 		{"plans", &info.Plans},
 		{"consents", &info.Consents},
 		{"audit_log", &info.Audit},
+		{"mcp_calls", &info.MCPCalls},
 	}
 	for _, t := range tables {
 		// Table names are compile-time constants, never user input.
@@ -51,7 +53,7 @@ func (s *Store) Info(ctx context.Context) (DataInfo, error) {
 // (SEC-TRN-04). The schema is kept.
 func (s *Store) Purge(ctx context.Context) error {
 	// Table names are compile-time constants, never user input.
-	tables := []string{"audit_log", "plan_items", "plans", "consents", "inaccessible", "entries", "scans"}
+	tables := []string{"audit_log", "mcp_calls", "plan_items", "plans", "consents", "inaccessible", "entries", "scans"}
 	return s.withTx(ctx, func(tx *sql.Tx) error {
 		for _, name := range tables {
 			if _, err := tx.ExecContext(ctx, "DELETE FROM "+name); err != nil { // #nosec G202 -- name is a compile-time constant
