@@ -81,6 +81,32 @@ testdata/              # fake ~/Library fixtures
 - Every result carries its data class (`regenerable_cache`, `app_data`, `user_file`, `application`).
 - Do **not** write MCP code, transports or tool definitions in Phases 1-2: Phase 3 adds them, isolated in `internal/mcp` and bound by `SECURITY.md` §8.
 
+### Index schema (SQLite)
+
+Migrations are embedded from `migrations/` and applied on open. The store keeps
+**metadata only** (`SECURITY.md` `SEC-TRN-02`).
+
+- `scans(id, started_at, finished_at, root, full, partial)`
+- `entries(entry_id, scan_id, path, parent, allocated_bytes, logical_bytes, mtime, is_dir, kind, data_class, bundle_id, dev, inode)`
+  — `entry_id` is stable (`domain.ComputeEntryID(scan_id, path)`); `dev`/`inode` enable hardlink dedup and apply-time revalidation.
+  Indexes: `(scan_id, kind)`, `(scan_id, allocated_bytes DESC)`, `(scan_id, data_class)`, `(path)`.
+- `inaccessible(scan_id, path, reason)` — partial results (`SEC-ACC-05`).
+- `consents(root, tier, granted_at, revoked_at)`
+- `plans(plan_id, hash, created_at, expires_at, status, total_size)`
+  and `plan_items(plan_id, entry_id, path, dev, inode, size, mtime, data_class)`
+- `audit_log(id, at, action, path, size, plan_id, result, detail)` — append-only (`SEC-TRN-07`).
+- `mcp_calls(id, at, tool, args_summary, status, duration_ms, item_count)` — append-only MCP audit (`SEC-MCP-08`).
+
+Deleting a scan cascades to its `entries` and `inaccessible` rows (scan rollback).
+
+### Documentation map
+
+- `README.md` — user-facing overview, install and usage.
+- `AGENTS.md` / `SECURITY.md` — instructions and mandatory rules for contributors/agents.
+- `INSTRUCTIONS.md` — how to drive MCC through an agent (MCP) and how to connect a client.
+- `skills/mcc-skill/SKILL.md` — the agent skill: how to get the most out of MCC.
+- `specs/*.md` — one spec per capability.
+
 ## 4. Commands (CLI contract)
 
 ```
@@ -191,12 +217,14 @@ Also required:
 - `SECURITY.md` §12 checklist satisfied.
 - Docs/specs updated if behavior, CLI contract or policy changed.
 - `CHANGELOG.md` updated under `[Unreleased]` (Keep a Changelog format, **written in Spanish**).
+- If behavior, the CLI contract, the JSON output or the policy changed, update **`skills/mcc-skill/SKILL.md`**, **`INSTRUCTIONS.md`**, the matching `specs/*.md` and `README.md` in the same change. The skill and instructions must never describe behavior that no longer exists.
 
 ## 11. Workflow
 
-- **Spec-driven development (SDD)** with OpenSpec: one spec per capability (`scan`, `apps`, `cache`, `orphans`, `large`, `clean`, `policy`, `tui`). Implement against the spec; if the spec is wrong or incomplete, propose a spec change first.
+- **Spec-driven development (SDD)** with OpenSpec: one spec per capability (`scan`, `apps`, `cache`, `orphans`, `large`, `clean`, `policy`, `tui`, `mcp`). Implement against the spec; if the spec is wrong or incomplete, propose a spec change first.
 - Keep tasks small and independent, each with explicit acceptance criteria.
-- Build order: `domain` + `store` + `policy` -> `scanner` -> `apps` + `cache` -> `large` -> `orphan` -> `cleaner` -> `cli` -> `tui`.
+- Build order: `domain` + `store` + `policy` -> `scanner` -> `apps` + `cache` -> `large` -> `orphan` -> `cleaner` -> `cli` -> `tui` -> `mcp`.
+- Any change to how the tool is used must keep `README.md`, `INSTRUCTIONS.md` and `skills/mcc-skill/SKILL.md` in sync **in the same commit** (the skill is updated whenever the behavior changes).
 - Commits follow **Conventional Commits** (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`). Versioning follows **SemVer**.
 - One logical change per PR/commit. Do not mix refactors with behavior changes.
 - If a `SECURITY.md` rule cannot be satisfied, stop, document it and ask; do not work around it.
