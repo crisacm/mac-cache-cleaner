@@ -97,6 +97,7 @@ func (a *App) rootCmd() *cobra.Command {
 		a.newPermissionsCmd(),
 		a.newDataCmd(),
 		a.newTUICmd(),
+		a.newMCPCmd(),
 	)
 	return root
 }
