@@ -21,10 +21,10 @@ func (f fakeIndex) EntryTotalsByPath(_ context.Context, _, path string) (domain.
 
 func TestClassify(t *testing.T) {
 	installed := map[string]struct{}{"com.example.app": {}}
-	require.Equal(t, domain.ConfidenceHigh, classify("com.orphan.leftover", installed))
-	require.Equal(t, domain.ConfidenceMedium, classify("com.orphan", installed))
-	require.Equal(t, domain.ConfidenceLow, classify("MyApp", installed))
-	require.Equal(t, domain.ConfidenceMedium, classify("com.example", installed))
+	require.Equal(t, domain.ConfidenceHigh, Classify("com.orphan.leftover", installed))
+	require.Equal(t, domain.ConfidenceMedium, Classify("com.orphan", installed))
+	require.Equal(t, domain.ConfidenceLow, Classify("MyApp", installed))
+	require.Equal(t, domain.ConfidenceMedium, Classify("com.example", installed))
 }
 
 func TestNormalizeCandidate(t *testing.T) {
@@ -111,4 +111,37 @@ func TestServiceSkipsTier2(t *testing.T) {
 	for _, o := range out {
 		require.NotContains(t, o.Path, "Google/Chrome")
 	}
+}
+
+func TestVerify(t *testing.T) {
+	home := t.TempDir()
+	svc := New(fakeIndex{}, policy.New(home, nil), home)
+	installed := map[string]struct{}{"com.example.app": {}}
+
+	// An installed app: not an orphan.
+	got := svc.Verify("/x/Library/Caches/com.example.app", Options{Installed: installed, DiscoveryComplete: true})
+	require.True(t, got.AppFound)
+	require.Contains(t, got.Reason, "installed")
+
+	// A full reverse-DNS leftover with complete discovery: high confidence.
+	got = svc.Verify("/x/Library/Caches/com.orphan.leftover", Options{Installed: installed, DiscoveryComplete: true})
+	require.False(t, got.AppFound)
+	require.Equal(t, domain.ConfidenceHigh, got.Confidence)
+	require.Equal(t, ConfidenceReason(domain.ConfidenceHigh), got.ConfidenceReason)
+
+	// Incomplete discovery degrades the confidence and says why.
+	got = svc.Verify("/x/Library/Caches/com.orphan.leftover", Options{Installed: installed, DiscoveryComplete: false})
+	require.Equal(t, domain.ConfidenceMedium, got.Confidence)
+	require.Contains(t, got.Reason, "degraded")
+
+	// Apple-owned leftovers are excluded.
+	got = svc.Verify("/x/Library/Caches/com.apple.Safari", Options{Installed: installed, DiscoveryComplete: true})
+	require.True(t, got.AppFound)
+	require.Contains(t, got.Reason, "apple")
+}
+
+func TestConfidenceReasonIsStatic(t *testing.T) {
+	require.Equal(t, "full reverse-DNS bundle identifier", ConfidenceReason(domain.ConfidenceHigh))
+	require.NotEmpty(t, ConfidenceReason(domain.ConfidenceMedium))
+	require.NotEmpty(t, ConfidenceReason(domain.ConfidenceLow))
 }

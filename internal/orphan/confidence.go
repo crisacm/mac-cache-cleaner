@@ -36,13 +36,13 @@ func isTeamID(s string) bool {
 	return true
 }
 
-// classify assigns a confidence level to a candidate identifier (SEC-ORP-01).
+// Classify assigns a confidence level to a candidate identifier (SEC-ORP-01).
 //
 //   - high:   the name is a full reverse-DNS bundle ID (>= 3 components).
 //   - medium: the name is a team prefix (2 components) or shares a team prefix
 //     with an installed application.
 //   - low:    anything else (a bare name).
-func classify(name string, installed map[string]struct{}) domain.Confidence {
+func Classify(name string, installed map[string]struct{}) domain.Confidence {
 	parts := strings.Split(name, ".")
 	switch {
 	case len(parts) >= 3:
@@ -57,6 +57,20 @@ func classify(name string, installed map[string]struct{}) domain.Confidence {
 		}
 	}
 	return domain.ConfidenceLow
+}
+
+// ConfidenceReason returns a static explanation of a confidence level. It never
+// contains filesystem-derived text, so it is safe in tool descriptions and
+// error messages (SEC-MCP-06).
+func ConfidenceReason(c domain.Confidence) string {
+	switch c {
+	case domain.ConfidenceHigh:
+		return "full reverse-DNS bundle identifier"
+	case domain.ConfidenceMedium:
+		return "team prefix or two-component identifier"
+	default:
+		return "name only, not a reverse-DNS identifier"
+	}
 }
 
 // degrade lowers a confidence level when app discovery is incomplete, because
