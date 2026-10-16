@@ -28,6 +28,13 @@ func main() {
 }
 
 func run() int {
+	// `mcc --version` is answered before any wiring so it never opens the index
+	// and works even with a read-only home directory (e.g. `brew test`).
+	if len(os.Args) == 2 && os.Args[1] == "--version" {
+		fmt.Println("mcc version", version)
+		return domain.ExitOK
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
