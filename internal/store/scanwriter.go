@@ -88,7 +88,9 @@ func (t *ScanTx) InsertEntries(ctx context.Context, entries []domain.Entry) erro
 	if err := t.dropIndexes(ctx); err != nil {
 		return err
 	}
-	return insertEntriesTx(ctx, t.tx, entries)
+	// On the very first scan the index is empty, so a plain INSERT is enough
+	// (no per-row conflict lookup for OR REPLACE).
+	return insertEntriesTx(ctx, t.tx, entries, t.hadRows)
 }
 
 // PruneDir deletes stored children of dir that are not in keep, together with
@@ -211,14 +213,16 @@ func (t *ScanTx) Rollback(_ context.Context) error {
 // below SQLite's variable limit (13 columns × rows).
 const insertChunkRows = 500
 
-// insertEntriesTx upserts entries (path is the key) in chunked multi-row INSERTs.
-func insertEntriesTx(ctx context.Context, tx *sql.Tx, entries []domain.Entry) error {
+// insertEntriesTx writes entries (path is the key) in chunked multi-row
+// INSERTs. replace selects upsert (INSERT OR REPLACE) semantics; pass false
+// only when the table is known to be empty.
+func insertEntriesTx(ctx context.Context, tx *sql.Tx, entries []domain.Entry, replace bool) error {
 	for start := 0; start < len(entries); start += insertChunkRows {
 		end := start + insertChunkRows
 		if end > len(entries) {
 			end = len(entries)
 		}
-		if err := insertEntryChunk(ctx, tx, entries[start:end]); err != nil {
+		if err := insertEntryChunk(ctx, tx, entries[start:end], replace); err != nil {
 			return err
 		}
 	}
@@ -247,10 +251,15 @@ func replaceInaccessibleTx(ctx context.Context, tx *sql.Tx, items []domain.Inacc
 	return nil
 }
 
-// insertEntryChunk issues one multi-row upsert (path is the primary key).
-func insertEntryChunk(ctx context.Context, tx *sql.Tx, batch []domain.Entry) error {
+// insertEntryChunk issues one multi-row INSERT (path is the primary key).
+func insertEntryChunk(ctx context.Context, tx *sql.Tx, batch []domain.Entry, replace bool) error {
+	verb := "INSERT INTO"
+	if replace {
+		verb = "INSERT OR REPLACE INTO"
+	}
 	var q strings.Builder
-	q.WriteString(`INSERT OR REPLACE INTO entries
+	q.WriteString(verb)
+	q.WriteString(` entries
 	    (path, entry_id, scan_id, parent, allocated_bytes, logical_bytes, mtime,
 	     is_dir, kind, data_class, bundle_id, dev, inode) VALUES `)
 	args := make([]any, 0, len(batch)*13)

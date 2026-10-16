@@ -280,6 +280,7 @@ func TestIncrementalReuseSkipsUnchangedDir(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, 1, inc.calls, "the unchanged root must be checked and reused once")
+	require.EqualValues(t, 1, res.ReusedDirs, "the reused directory is reported")
 	require.EqualValues(t, 0, res.Totals.Entries, "a reused subtree is not walked")
 	for _, e := range res.Entries {
 		require.NotEqual(t, caches, e.Path, "a reused directory must not be re-emitted")

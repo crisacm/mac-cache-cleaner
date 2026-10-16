@@ -88,6 +88,9 @@ type Result struct {
 	Entries      []domain.Entry
 	Partial      bool
 	Skipped      []string
+	// ReusedDirs is how many directories were skipped because they were
+	// unchanged since the previous scan (incremental reuse).
+	ReusedDirs int64
 }
 
 // Scanner walks directories under a policy.
@@ -278,6 +281,7 @@ type walker struct {
 	directories   int64
 	current       string
 	rootCount     int
+	reusedDirs    int64
 	err           error
 }
 
@@ -433,6 +437,7 @@ func (w *walker) tryReuse(task dirTask) bool {
 	}
 	w.mu.Lock()
 	w.progressAlloc += alloc
+	w.reusedDirs++
 	if parent := w.dirs[filepath.Dir(task.path)]; parent != nil {
 		parent.subAlloc += alloc
 		parent.subLogic += logical
@@ -813,6 +818,7 @@ func (w *walker) result(roots []string) Result {
 	byClass := w.byClass
 	byKind := w.byKind
 	emitted := w.emitted
+	reusedDirs := w.reusedDirs
 	w.mu.Unlock()
 
 	total.Entries = emitted
@@ -833,5 +839,6 @@ func (w *walker) result(roots []string) Result {
 		Entries:      entries,
 		Partial:      partial,
 		Skipped:      skipped,
+		ReusedDirs:   reusedDirs,
 	}
 }

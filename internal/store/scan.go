@@ -72,7 +72,7 @@ func (s *Store) InsertEntries(ctx context.Context, entries []domain.Entry) error
 		return nil
 	}
 	return s.withTx(ctx, func(tx *sql.Tx) error {
-		return insertEntriesTx(ctx, tx, entries)
+		return insertEntriesTx(ctx, tx, entries, true)
 	})
 }
 

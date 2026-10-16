@@ -151,6 +151,7 @@ type scanOutput struct {
 	Inaccessible []domain.Inaccessible              `json:"inaccessible,omitempty"`
 	Partial      bool                               `json:"partial"`
 	Pruned       int64                              `json:"pruned,omitempty"`
+	ReusedDirs   int64                              `json:"reused_dirs,omitempty"`
 }
 
 func (a *App) runScan(ctx context.Context, cmd *cobra.Command) error {
@@ -211,6 +212,7 @@ func (a *App) runScan(ctx context.Context, cmd *cobra.Command) error {
 		Entries: res.Totals.Entries, Allocated: res.Totals.AllocatedBytes,
 		Logical: res.Totals.LogicalBytes, ByClass: res.ByClass,
 		Inaccessible: res.Inaccessible, Partial: res.Partial, Pruned: out.Pruned,
+		ReusedDirs: res.ReusedDirs,
 	}
 	if asJSON {
 		if err := writeJSON(a.Out, output); err != nil {
@@ -218,6 +220,9 @@ func (a *App) runScan(ctx context.Context, cmd *cobra.Command) error {
 		}
 	} else {
 		a.renderScan(res, out.Scan.Roots)
+		if res.ReusedDirs > 0 {
+			fmt.Fprintf(a.Out, "%d directorio(s) sin cambios reutilizados del índice anterior (usa --full para recorrer todo)\n", res.ReusedDirs)
+		}
 		if out.Pruned > 0 {
 			fmt.Fprintf(a.Out, "Índice: %d scan(s) antiguo(s) eliminado(s) (retención: %d)\n", out.Pruned, a.Cfg.RetainScans)
 		}
