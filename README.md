@@ -30,7 +30,7 @@ brew tap crisacm/tap
 brew install mcc
 ```
 
-La fórmula vive en [`crisacm/homebrew-tap`](https://github.com/crisacm/homebrew-tap) y compila el binario desde el código fuente (Homebrew instala Go como dependencia de build). Comprueba la versión instalada con `mcc --version`.
+La fórmula vive en [`crisacm/homebrew-tap`](https://github.com/crisacm/homebrew-tap) y descarga el binario precompilado de tu arquitectura (Apple Silicon o Intel). Comprueba la versión instalada con `mcc --version`.
 
 ### Desde el código
 
@@ -98,7 +98,7 @@ Requiere una terminal. Reutiliza los mismos servicios que la CLI y **no decide a
 
 - **Binarios precompilados**: cada tag `vX.Y.Z` dispara [`.github/workflows/release.yml`](./.github/workflows/release.yml) (GoReleaser), que publica en GitHub Releases los binarios `darwin/arm64` y `darwin/amd64` junto con sus checksums y el changelog.
 - **Homebrew**: el mismo flujo actualiza la fórmula en [`crisacm/homebrew-tap`](https://github.com/crisacm/homebrew-tap). Requiere el secreto **`HOMEBREW_TAP_TOKEN`** (PAT con *Contents: read and write* sobre el tap), que se configura una vez con `gh secret set HOMEBREW_TAP_TOKEN`. Sin él, GoReleaser publica la release pero falla al actualizar la fórmula.
-- Hasta la primera release automatizada, la fórmula del tap compila desde el código fuente (ver *Instalación*).
+- La fórmula del tap instala un **binario precompilado** (arm64 o amd64 según tu Mac), así que `brew install mcc` no necesita Go. La v0.1.0 todavía compilaba desde el código fuente.
 - Configuración en [`.goreleaser.yaml`](./.goreleaser.yaml). Validación local: `goreleaser release --snapshot --clean --skip=publish` (GoReleaser avisa de que `brews` está deprecado en favor de los casks).
 
 ## Seguridad y privacidad
