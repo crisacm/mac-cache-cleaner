@@ -16,7 +16,9 @@ import (
 func (s *Store) LatestScanID(ctx context.Context) (string, bool, error) {
 	var id string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id FROM scans ORDER BY started_at DESC, id DESC LIMIT 1`).Scan(&id)
+		`SELECT id FROM scans
+		 WHERE finished_at IS NOT NULL AND finished_at <> ''
+		 ORDER BY started_at DESC, id DESC LIMIT 1`).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
 	}

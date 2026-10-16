@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 )
 
 // DataInfo summarizes what is stored (for `mcc data show`, SEC-TRN-04).
@@ -41,10 +42,10 @@ func (s *Store) Info(ctx context.Context) (DataInfo, error) {
 			return DataInfo{}, fmt.Errorf("store: count %s: %w", t.name, err)
 		}
 	}
-	if err := s.db.QueryRowContext(ctx,
-		"SELECT COALESCE(SUM(pgsize), 0) FROM dbstat").Scan(&info.SizeBytes); err != nil {
-		// dbstat is optional; fall back to zero rather than failing.
-		info.SizeBytes = 0
+	// The database file size on disk; cheaper and more meaningful than page
+	// accounting (which scans the whole file).
+	if fi, err := os.Stat(s.path); err == nil {
+		info.SizeBytes = fi.Size()
 	}
 	return info, nil
 }

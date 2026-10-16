@@ -52,7 +52,8 @@ func Open(ctx context.Context, dir string) (*Store, error) {
 		return nil, err
 	}
 
-	dsn := "file:" + path + "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
+	dsn := "file:" + path + "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)" +
+		"&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("store: open %s: %w", path, err)
@@ -71,15 +72,38 @@ func Open(ctx context.Context, dir string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	if err := os.Chmod(path, fileMode); err != nil {
+	if err := s.EnsurePerms(); err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("store: chmod %s: %w", path, err)
+		return nil, err
+	}
+	// Leftovers from a killed scan must never be read as the current index.
+	if _, err := s.CleanIncompleteScans(ctx, time.Now().Add(-incompleteScanGrace)); err != nil {
+		_ = db.Close()
+		return nil, err
 	}
 	return s, nil
 }
 
+// incompleteScanGrace is how long an unfinished scan is tolerated before it is
+// considered a leftover of a killed process.
+const incompleteScanGrace = time.Hour
+
+// EnsurePerms forces 0600 on the database file and its WAL sidecars
+// (SEC-TRN-03).
+func (s *Store) EnsurePerms() error {
+	for _, p := range []string{s.path, s.path + "-wal", s.path + "-shm"} {
+		if err := os.Chmod(p, fileMode); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("store: chmod %s: %w", p, err)
+		}
+	}
+	return nil
+}
+
 // Close releases the database handle.
-func (s *Store) Close() error { return s.db.Close() }
+func (s *Store) Close() error {
+	_ = s.EnsurePerms()
+	return s.db.Close()
+}
 
 // Dir returns the storage directory.
 func (s *Store) Dir() string { return s.dir }

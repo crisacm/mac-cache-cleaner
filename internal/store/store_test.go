@@ -68,6 +68,8 @@ func TestScanRoundTrip(t *testing.T) {
 		},
 	}
 	require.NoError(t, s.InsertEntries(ctx, entries))
+	// A scan only counts as "latest" once it is finished.
+	require.NoError(t, s.FinishScan(ctx, scan.ID, now.Add(time.Second), true))
 
 	got, err := s.GetScan(ctx, scan.ID)
 	require.NoError(t, err)
@@ -96,7 +98,6 @@ func TestScanRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "com.example.foo", byID.BundleID)
 
-	require.NoError(t, s.FinishScan(ctx, scan.ID, now.Add(time.Second), true))
 	got, err = s.GetScan(ctx, scan.ID)
 	require.NoError(t, err)
 	require.True(t, got.Partial)
@@ -253,6 +254,7 @@ func TestIncrementalCopySubtree(t *testing.T) {
 		},
 	}
 	require.NoError(t, s.InsertEntries(ctx, entries))
+	require.NoError(t, s.FinishScan(ctx, "s1", mt.Add(time.Second), false))
 
 	prev, ok, err := s.LatestScanID(ctx)
 	require.NoError(t, err)
@@ -345,4 +347,134 @@ func TestMCPCallAudit(t *testing.T) {
 	info, err = s.Info(ctx)
 	require.NoError(t, err)
 	require.Zero(t, info.MCPCalls, "purge must clear the mcp audit")
+}
+
+func TestLatestScanIgnoresIncomplete(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t)
+	base := time.Now().UTC().Truncate(time.Second)
+
+	// A completed scan...
+	require.NoError(t, s.SaveScan(ctx, domain.Scan{ID: "done", StartedAt: base, Root: "/r"}))
+	require.NoError(t, s.FinishScan(ctx, "done", base.Add(time.Minute), false))
+	// ...and a newer in-progress one (no finished_at).
+	require.NoError(t, s.SaveScan(ctx, domain.Scan{ID: "half", StartedAt: base.Add(time.Hour), Root: "/r"}))
+
+	got, err := s.LatestScan(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "done", got.ID, "an unfinished scan must never be the latest")
+
+	id, ok, err := s.LatestScanID(ctx)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, "done", id)
+}
+
+func TestCleanIncompleteScans(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t)
+	now := time.Now().UTC()
+
+	require.NoError(t, s.SaveScan(ctx, domain.Scan{ID: "old-half", StartedAt: now.Add(-2 * time.Hour), Root: "/r"}))
+	require.NoError(t, s.SaveScan(ctx, domain.Scan{ID: "recent-half", StartedAt: now.Add(-time.Minute), Root: "/r"}))
+	require.NoError(t, s.SaveScan(ctx, domain.Scan{ID: "done", StartedAt: now.Add(-3 * time.Hour), Root: "/r"}))
+	require.NoError(t, s.FinishScan(ctx, "done", now.Add(-3*time.Hour), false))
+
+	n, err := s.CleanIncompleteScans(ctx, now.Add(-time.Hour))
+	require.NoError(t, err)
+	require.EqualValues(t, 1, n, "only the old unfinished scan is removed")
+
+	_, err = s.GetScan(ctx, "old-half")
+	require.ErrorIs(t, err, domain.ErrNotFound)
+	_, err = s.GetScan(ctx, "recent-half")
+	require.NoError(t, err, "a recent unfinished scan may belong to another process")
+	_, err = s.GetScan(ctx, "done")
+	require.NoError(t, err, "completed scans are never touched")
+}
+
+func TestPruneScansKeepsNewestAndProtectsData(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t)
+	base := time.Now().UTC().Truncate(time.Second)
+
+	// Three completed scans, oldest to newest, each with an entry.
+	for i, id := range []string{"s1", "s2", "s3"} {
+		at := base.Add(time.Duration(i) * time.Minute)
+		require.NoError(t, s.SaveScan(ctx, domain.Scan{ID: id, StartedAt: at, Root: "/r"}))
+		require.NoError(t, s.InsertEntries(ctx, []domain.Entry{{
+			EntryID: domain.ComputeEntryID(id, "/r/f"), ScanID: id, Path: "/r/f",
+			Kind: domain.KindFile, DataClass: domain.ClassRegenerableCache,
+		}}))
+		require.NoError(t, s.FinishScan(ctx, id, at.Add(time.Second), false))
+	}
+	// Protected data that must survive pruning.
+	require.NoError(t, s.GrantConsent(ctx, domain.Consent{Root: "/r", Tier: domain.TierUserData, GrantedAt: base}))
+	require.NoError(t, s.CreatePlan(ctx, domain.Plan{PlanID: "p1", Hash: "h", CreatedAt: base, ExpiresAt: base.Add(time.Hour), Status: domain.PlanPending}))
+	require.NoError(t, s.AppendAudit(ctx, domain.AuditEntry{At: base, Action: "trash", Path: "/r/f"}))
+	require.NoError(t, s.AppendMCPCall(ctx, domain.MCPCall{At: base, Tool: "mcc_get_status", Status: "ok"}))
+
+	n, err := s.PruneScans(ctx, 1)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, n)
+	require.Equal(t, int64(1), countScans(t, s), "only the newest scan is retained")
+
+	// Retained: newest scan and its entry.
+	totals, err := s.Totals(ctx, "s3")
+	require.NoError(t, err)
+	require.EqualValues(t, 1, totals.Entries)
+	// Protected tables are untouched.
+	plan, err := s.GetPlan(ctx, "p1")
+	require.NoError(t, err)
+	require.Equal(t, "p1", plan.PlanID)
+	consents, err := s.Consents(ctx)
+	require.NoError(t, err)
+	require.Len(t, consents, 1)
+	log, err := s.AuditLog(ctx, 10)
+	require.NoError(t, err)
+	require.Len(t, log, 1)
+	calls, err := s.MCPCalls(ctx, 10)
+	require.NoError(t, err)
+	require.Len(t, calls, 1)
+}
+
+func countScans(t *testing.T, s *Store) int64 {
+	t.Helper()
+	var n int64
+	require.NoError(t, s.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM scans`).Scan(&n))
+	return n
+}
+
+func TestStoreFilesAreRestricted(t *testing.T) {
+	ctx := context.Background()
+	dir := filepath.Join(t.TempDir(), "mcc")
+	s, err := Open(ctx, dir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+
+	// Write something so the WAL sidecar exists.
+	require.NoError(t, s.SaveScan(ctx, domain.Scan{ID: "s1", StartedAt: time.Now(), Root: "/r"}))
+	require.NoError(t, s.InsertEntries(ctx, []domain.Entry{{
+		EntryID: "e1", ScanID: "s1", Path: "/r/f", Kind: domain.KindFile, DataClass: domain.ClassRegenerableCache,
+	}}))
+	require.NoError(t, s.FinishScan(ctx, "s1", time.Now(), false))
+	require.NoError(t, s.EnsurePerms())
+
+	for _, p := range []string{s.Path(), s.Path() + "-wal", s.Path() + "-shm"} {
+		fi, err := os.Stat(p)
+		if os.IsNotExist(err) {
+			continue
+		}
+		require.NoError(t, err)
+		require.Equal(t, os.FileMode(0o600), fi.Mode().Perm(), "%s must be 0600", p)
+	}
+}
+
+func TestVacuumKeepsDatabaseUsable(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t)
+	require.NoError(t, s.SaveScan(ctx, domain.Scan{ID: "s1", StartedAt: time.Now(), Root: "/r"}))
+	require.NoError(t, s.FinishScan(ctx, "s1", time.Now(), false))
+	require.NoError(t, s.Vacuum(ctx))
+	_, err := s.LatestScan(ctx)
+	require.NoError(t, err)
 }

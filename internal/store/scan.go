@@ -47,10 +47,13 @@ func (s *Store) GetScan(ctx context.Context, id string) (domain.Scan, error) {
 	return scan, err
 }
 
-// LatestScan returns the most recent scan.
+// LatestScan returns the most recent *completed* scan. In-progress or aborted
+// scans (no finished_at) are ignored so readers never use a half-written index.
 func (s *Store) LatestScan(ctx context.Context) (domain.Scan, error) {
 	const q = `SELECT id, started_at, finished_at, root, full, partial
-	           FROM scans ORDER BY started_at DESC, id DESC LIMIT 1`
+	           FROM scans
+	           WHERE finished_at IS NOT NULL AND finished_at <> ''
+	           ORDER BY started_at DESC, id DESC LIMIT 1`
 	row := s.db.QueryRowContext(ctx, q)
 	scan, err := scanRow(row)
 	if errors.Is(err, sql.ErrNoRows) {
