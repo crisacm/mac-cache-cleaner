@@ -28,7 +28,12 @@ type Repo interface {
 	// Incremental reuse.
 	DirMTime(ctx context.Context, scanID, path string) (time.Time, bool, error)
 	CopySubtree(ctx context.Context, srcScan, dstScan, prefix string) (domain.SubtreeTotals, error)
+	// PruneScans keeps the newest `keep` completed scans (index retention).
+	PruneScans(ctx context.Context, keep int) (int64, error)
 }
+
+// DefaultRetainScans is how many completed scans are kept after a scan.
+const DefaultRetainScans = 1
 
 // Policy decides which roots may be scanned (implemented by *policy.Policy).
 type Policy interface {
@@ -57,12 +62,17 @@ type Options struct {
 	ProgressEvery int
 	// ScanID, when empty, is generated.
 	ScanID string
+	// RetainScans is how many completed scans to keep afterwards (<= 0 uses
+	// DefaultRetainScans).
+	RetainScans int
 }
 
 // Outcome is the result of a completed scan.
 type Outcome struct {
 	Scan   domain.Scan
 	Result scanner.Result
+	// Pruned is how many old scans were removed after this one completed.
+	Pruned int64
 }
 
 // Service orchestrates scans.
@@ -187,7 +197,16 @@ func (s *Service) Run(ctx context.Context, opts Options) (Outcome, error) {
 	}
 	scan.FinishedAt = finished
 	scan.Partial = res.Partial
-	return Outcome{Scan: scan, Result: res}, nil
+
+	// Retention: keep the index bounded. Runs only after a successful scan, so
+	// a failed or cancelled scan never leaves us without an index.
+	keep := opts.RetainScans
+	if keep <= 0 {
+		keep = DefaultRetainScans
+	}
+	pruned, _ := s.repo.PruneScans(ctx, keep)
+
+	return Outcome{Scan: scan, Result: res, Pruned: pruned}, nil
 }
 
 // rollback deletes a partially written scan, best effort.

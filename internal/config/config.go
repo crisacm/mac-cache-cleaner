@@ -25,6 +25,7 @@ var knownKeys = map[string]struct{}{
 	"max_items":       {},
 	"max_bytes":       {},
 	"no_color":        {},
+	"retain_scans":    {},
 }
 
 // Config is MCC's runtime configuration.
@@ -40,6 +41,9 @@ type Config struct {
 	// MaxItems and MaxBytes bound a single plan / apply.
 	MaxItems int
 	MaxBytes int64
+	// RetainScans is how many completed scans are kept after a scan (index
+	// retention; 1 means the index is reset on each scan).
+	RetainScans int
 	// NoColor disables ANSI colour in human output.
 	NoColor bool
 }
@@ -53,6 +57,7 @@ func Default(home string) Config {
 		PlanTTL:        time.Hour,
 		MaxItems:       1000,
 		MaxBytes:       0,
+		RetainScans:    1,
 		NoColor:        false,
 	}
 }
@@ -77,6 +82,7 @@ func Load(home string) (Config, error) {
 	v.SetDefault("max_items", cfg.MaxItems)
 	v.SetDefault("max_bytes", cfg.MaxBytes)
 	v.SetDefault("no_color", cfg.NoColor)
+	v.SetDefault("retain_scans", cfg.RetainScans)
 
 	if err := v.ReadInConfig(); err != nil {
 		if !isNotFound(err) {
@@ -96,6 +102,7 @@ func Load(home string) (Config, error) {
 	cfg.MaxItems = v.GetInt("max_items")
 	cfg.MaxBytes = v.GetInt64("max_bytes")
 	cfg.NoColor = v.GetBool("no_color")
+	cfg.RetainScans = v.GetInt("retain_scans")
 
 	ttl, err := time.ParseDuration(v.GetString("plan_ttl"))
 	if err != nil {
@@ -108,6 +115,9 @@ func Load(home string) (Config, error) {
 	}
 	if cfg.Workers < 0 {
 		return Config{}, fmt.Errorf("config: workers must not be negative")
+	}
+	if cfg.RetainScans < 1 {
+		return Config{}, fmt.Errorf("config: retain_scans must be at least 1")
 	}
 	return cfg, nil
 }

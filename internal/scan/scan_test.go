@@ -22,6 +22,7 @@ type fakeRepo struct {
 	finished     map[string]bool
 	deleted      []string
 	latest       string
+	pruneKeep    []int
 }
 
 func newFakeRepo() *fakeRepo {
@@ -83,6 +84,11 @@ func (f *fakeRepo) DirMTime(context.Context, string, string) (time.Time, bool, e
 
 func (f *fakeRepo) CopySubtree(context.Context, string, string, string) (domain.SubtreeTotals, error) {
 	return domain.SubtreeTotals{}, nil
+}
+
+func (f *fakeRepo) PruneScans(_ context.Context, keep int) (int64, error) {
+	f.pruneKeep = append(f.pruneKeep, keep)
+	return 0, nil
 }
 
 // fakePolicy allows a fixed set of roots and blocks the rest.
@@ -198,4 +204,31 @@ type cancelWalker struct{ cancel context.CancelFunc }
 func (w *cancelWalker) Scan(ctx context.Context, _ scanner.Options) (scanner.Result, error) {
 	w.cancel()
 	return scanner.Result{}, ctx.Err()
+}
+
+func TestRunPrunesAfterSuccess(t *testing.T) {
+	repo := newFakeRepo()
+	walker := &fakeWalker{result: scanner.Result{}}
+	svc := New(repo, fakePolicy{roots: []string{"/root"}}, WithWalker(walker))
+
+	_, err := svc.Run(context.Background(), Options{RetainScans: 1})
+	require.NoError(t, err)
+	require.Equal(t, []int{1}, repo.pruneKeep, "pruning runs only after a successful scan")
+
+	// A failed scan must not prune (the previous index is kept).
+	repo2 := newFakeRepo()
+	svc2 := New(repo2, fakePolicy{roots: []string{"/root"}}, WithWalker(&fakeWalker{err: errors.New("boom")}))
+	_, err = svc2.Run(context.Background(), Options{})
+	require.Error(t, err)
+	require.Empty(t, repo2.pruneKeep, "a failed scan must never prune")
+}
+
+func TestRunPrunesAfterCancelDoesNotHappen(t *testing.T) {
+	repo := newFakeRepo()
+	ctx, cancel := context.WithCancel(context.Background())
+	svc := New(repo, fakePolicy{roots: []string{"/root"}}, WithWalker(&cancelWalker{cancel: cancel}))
+
+	_, err := svc.Run(ctx, Options{})
+	require.ErrorIs(t, err, context.Canceled)
+	require.Empty(t, repo.pruneKeep, "a cancelled scan must never prune")
 }
