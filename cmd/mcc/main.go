@@ -19,6 +19,10 @@ import (
 	"github.com/crisacm/mac-cache-cleaner/internal/store"
 )
 
+// version is the release version reported by `mcc --version`. It is injected at
+// build time with -ldflags "-X main.version=..."; the default is for `go run`.
+var version = "dev"
+
 func main() {
 	os.Exit(run())
 }
@@ -71,6 +75,7 @@ func run() int {
 	}
 
 	app := cli.New(home, cfg, pol, st, os.Stdin, os.Stdout, os.Stderr, isTTY)
+	app.Version = version
 	return app.Execute(ctx, os.Args[1:])
 }
 

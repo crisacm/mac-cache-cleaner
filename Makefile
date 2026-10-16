@@ -17,6 +17,11 @@ BIN_DIR := bin
 BIN     := $(BIN_DIR)/mcc
 PKG     := ./...
 ARGS    ?=
+# VERSION is embedded in the binary and reported by `mcc --version`. A release
+# tag (vX.Y.Z) gives the clean version; otherwise git describe falls back to the
+# short commit (with -dirty when the tree has local changes).
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS := -X main.version=$(VERSION)
 
 # require_tool(<binary>) aborts with a clear message when a tool is absent.
 define require_tool
@@ -49,7 +54,7 @@ test:
 
 build:
 	$(call require_tool,$(GO))
-	CGO_ENABLED=0 $(GO) build -trimpath -o $(BIN) ./cmd/mcc
+	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/mcc
 
 run: build
 	$(BIN) $(ARGS)

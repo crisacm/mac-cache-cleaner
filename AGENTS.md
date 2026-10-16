@@ -135,6 +135,7 @@ mcc permissions [show|grant|revoke <root>]        # show effective policy / cons
 mcc data show | purge                  # what is stored, where; wipe it
 mcc tui                                # phase 2
 mcc mcp                                # phase 3: MCP server (stdio) for agents
+mcc --version                          # build version (ldflags -X main.version)
 ```
 
 - Read commands support `--json` and `--no-color`. JSON output is a stable contract: do not rename/remove fields without a SemVer-aware changelog entry.

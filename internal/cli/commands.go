@@ -36,6 +36,8 @@ type App struct {
 	Cfg    config.Config
 	Policy *policy.Policy
 	Store  *store.Store
+	// Version is reported by `mcc --version`; it is injected at build time.
+	Version string
 }
 
 // New builds an App.
@@ -86,6 +88,7 @@ func (a *App) rootCmd() *cobra.Command {
 		Use:           "mcc",
 		Short:         "MCC — Mac Cache Cleaner",
 		Long:          "MCC indexes disk usage (apps, caches, orphans, large items) and cleans it safely.",
+		Version:       a.Version,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 	}
