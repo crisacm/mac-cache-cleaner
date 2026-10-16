@@ -7,6 +7,10 @@ y este proyecto se adhiere a [Versionado Semántico](https://semver.org/lang/es/
 
 ## [No publicado]
 
+<!-- Cambios pendientes de la próxima versión. -->
+
+## [0.1.1] - 2026-10-16
+
 ### Añadido
 
 - **Versión del binario** (`mcc --version`): se inyecta en el build con
