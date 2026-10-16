@@ -325,25 +325,29 @@ func (a *App) grantConsent(ctx context.Context, root string) error {
 
 func (a *App) newDataCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "data show | purge",
-		Short: "Show or erase what MCC stores",
+		Use:   "data show | purge | prune",
+		Short: "Show, prune or erase what MCC stores",
 		RunE:  func(cmd *cobra.Command, args []string) error { return a.runData(cmd.Context(), cmd, args) },
 	}
+	cmd.Flags().Int("keep", 0, "scans to retain when pruning (default: config retain_scans)")
+	cmd.Flags().Bool("vacuum", false, "rebuild the database file to reclaim disk space")
 	addReadFlags(cmd)
 	return cmd
 }
 
 func (a *App) runData(ctx context.Context, cmd *cobra.Command, args []string) error {
 	if len(args) != 1 {
-		return fmt.Errorf("%w: usage: mcc data show | purge", domain.ErrUsage)
+		return fmt.Errorf("%w: usage: mcc data show | purge | prune", domain.ErrUsage)
 	}
 	switch args[0] {
 	case "show":
 		return a.dataShow(ctx, cmd)
+	case "prune":
+		return a.dataPrune(ctx, cmd)
 	case "purge":
 		return a.dataPurge(ctx, cmd)
 	default:
-		return fmt.Errorf("%w: usage: mcc data show | purge", domain.ErrUsage)
+		return fmt.Errorf("%w: usage: mcc data show | purge | prune", domain.ErrUsage)
 	}
 }
 
@@ -381,6 +385,140 @@ func (a *App) dataPurge(ctx context.Context, _ *cobra.Command) error {
 	}
 	fmt.Fprintln(a.Out, "All MCC data erased.")
 	return nil
+}
+
+// dataPrune removes old scans (keeping the newest `keep` completed ones) and,
+// optionally, rebuilds the file to reclaim disk space.
+func (a *App) dataPrune(ctx context.Context, cmd *cobra.Command) error {
+	keep, _ := cmd.Flags().GetInt("keep")
+	vacuum, _ := cmd.Flags().GetBool("vacuum")
+	if keep <= 0 {
+		keep = a.Cfg.RetainScans
+	}
+	asJSON, _ := cmd.Flags().GetBool("json")
+
+	removed, err := a.Store.PruneScans(ctx, keep)
+	if err != nil {
+		return err
+	}
+	if vacuum {
+		if err := a.Store.Vacuum(ctx); err != nil {
+			return err
+		}
+	}
+	info, err := a.Store.Info(ctx)
+	if err != nil {
+		return err
+	}
+	if asJSON {
+		return writeJSON(a.Out, map[string]any{
+			"removed_scans": removed, "kept": keep, "vacuumed": vacuum,
+			"scans": info.Scans, "entries": info.Entries, "size_bytes": info.SizeBytes,
+		})
+	}
+	fmt.Fprintf(a.Out, "Eliminados %d scan(s) antiguo(s); quedan %d. BD: %s\n",
+		removed, info.Scans, render.FormatBytes(info.SizeBytes))
+	if !vacuum && removed > 0 {
+		fmt.Fprintln(a.Out, "Sugerencia: usa --vacuum para recuperar el espacio en disco.")
+	}
+	return nil
+}
+
+// --- status ------------------------------------------------------------
+
+type statusOutput struct {
+	HasScan           bool   `json:"has_scan"`
+	ScanID            string `json:"scan_id,omitempty"`
+	StartedAt         string `json:"started_at,omitempty"`
+	FinishedAt        string `json:"finished_at,omitempty"`
+	AgeSeconds        int64  `json:"age_seconds,omitempty"`
+	Partial           bool   `json:"partial,omitempty"`
+	InaccessibleCount int    `json:"inaccessible_count,omitempty"`
+	Entries           int64  `json:"entries,omitempty"`
+	Allocated         int64  `json:"allocated_bytes,omitempty"`
+	Logical           int64  `json:"logical_bytes,omitempty"`
+	RetainedScans     int64  `json:"retained_scans"`
+	RetainScans       int    `json:"retain_scans"`
+	Plans             int64  `json:"plans"`
+	Consents          int64  `json:"consents"`
+	MCPCalls          int64  `json:"mcp_calls"`
+	DatabaseBytes     int64  `json:"database_bytes"`
+	DataDir           string `json:"data_dir"`
+}
+
+func (a *App) newStatusCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "status",
+		Short: "Show the state of the local index (no scan, no disk access)",
+		RunE:  func(cmd *cobra.Command, _ []string) error { return a.runStatus(cmd.Context(), cmd) },
+	}
+	addReadFlags(cmd)
+	return cmd
+}
+
+func (a *App) runStatus(ctx context.Context, cmd *cobra.Command) error {
+	asJSON, _ := cmd.Flags().GetBool("json")
+	info, err := a.Store.Info(ctx)
+	if err != nil {
+		return err
+	}
+	out := statusOutput{
+		RetainedScans: info.Scans,
+		RetainScans:   a.Cfg.RetainScans,
+		Plans:         info.Plans,
+		Consents:      info.Consents,
+		MCPCalls:      info.MCPCalls,
+		DatabaseBytes: info.SizeBytes,
+		DataDir:       render.Redact(info.Dir, a.Home, false),
+	}
+	if sc, err := a.Store.LatestScan(ctx); err == nil {
+		out.HasScan = true
+		out.ScanID = sc.ID
+		out.StartedAt = sc.StartedAt.Format(time.RFC3339)
+		out.Partial = sc.Partial
+		if !sc.FinishedAt.IsZero() {
+			out.FinishedAt = sc.FinishedAt.Format(time.RFC3339)
+			out.AgeSeconds = int64(time.Since(sc.FinishedAt).Seconds())
+		}
+		if totals, err := a.Store.Totals(ctx, sc.ID); err == nil {
+			out.Entries, out.Allocated, out.Logical = totals.Entries, totals.AllocatedBytes, totals.LogicalBytes
+		}
+		if inacc, err := a.Store.Inaccessible(ctx, sc.ID); err == nil {
+			out.InaccessibleCount = len(inacc)
+		}
+	}
+
+	if asJSON {
+		return writeJSON(a.Out, out)
+	}
+	if !out.HasScan {
+		fmt.Fprintln(a.Out, "Sin índice. Ejecuta `mcc scan` (o pide a una persona que lo haga).")
+	} else {
+		fmt.Fprintf(a.Out, "Último escaneo: %s (%s, hace %s)\n", out.ScanID[:12], out.StartedAt, humanAge(out.AgeSeconds))
+		fmt.Fprintf(a.Out, "Entradas: %d · %s en disco (%s lógico)\n", out.Entries, render.FormatBytes(out.Allocated), render.FormatBytes(out.Logical))
+		if out.Partial || out.InaccessibleCount > 0 {
+			fmt.Fprintf(a.Out, "Resultado parcial: %d ruta(s) inaccesible(s)\n", out.InaccessibleCount)
+		}
+	}
+	fmt.Fprintf(a.Out, "Retención: %d scan(s) (retain_scans=%d) · planes %d · consentimientos %d · llamadas MCP %d\n",
+		out.RetainedScans, out.RetainScans, out.Plans, out.Consents, out.MCPCalls)
+	fmt.Fprintf(a.Out, "Base de datos: %s en %s\n", render.FormatBytes(out.DatabaseBytes), out.DataDir)
+	return nil
+}
+
+func humanAge(seconds int64) string {
+	switch {
+	case seconds < 0:
+		return "?"
+	case seconds < 60:
+		return fmt.Sprintf("%ds", seconds)
+	case seconds < 3600:
+		return fmt.Sprintf("%dm", seconds/60)
+	case seconds < 86400:
+		return fmt.Sprintf("%dh", seconds/3600)
+	default:
+		return fmt.Sprintf("%dd", seconds/86400)
+	}
 }
 
 // --- helpers -----------------------------------------------------------

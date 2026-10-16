@@ -96,6 +96,7 @@ func (a *App) rootCmd() *cobra.Command {
 		a.newReportCmd(),
 		a.newPermissionsCmd(),
 		a.newDataCmd(),
+		a.newStatusCmd(),
 		a.newTUICmd(),
 		a.newMCPCmd(),
 	)
@@ -129,6 +130,8 @@ func (a *App) newScanCmd() *cobra.Command {
 	cmd.Flags().StringArray("root", nil, "scan root (repeatable)")
 	cmd.Flags().Bool("full", false, "ignore incremental reuse")
 	cmd.Flags().Bool("explain", false, "show which roots are scanned or skipped and exit")
+	cmd.Flags().Bool("quiet", false, "do not print scan progress")
+	cmd.Flags().Duration("timeout", 0, "cancel (and roll back) the scan after this long (0 = no limit)")
 	addReadFlags(cmd)
 	return cmd
 }
@@ -144,6 +147,7 @@ type scanOutput struct {
 	ByClass      map[domain.DataClass]domain.Totals `json:"by_class"`
 	Inaccessible []domain.Inaccessible              `json:"inaccessible,omitempty"`
 	Partial      bool                               `json:"partial"`
+	Pruned       int64                              `json:"pruned,omitempty"`
 }
 
 func (a *App) runScan(ctx context.Context, cmd *cobra.Command) error {
@@ -151,6 +155,8 @@ func (a *App) runScan(ctx context.Context, cmd *cobra.Command) error {
 	full, _ := cmd.Flags().GetBool("full")
 	explain, _ := cmd.Flags().GetBool("explain")
 	asJSON, _ := cmd.Flags().GetBool("json")
+	quiet, _ := cmd.Flags().GetBool("quiet")
+	timeout, _ := cmd.Flags().GetDuration("timeout")
 
 	if explain {
 		if len(roots) == 0 {
@@ -159,9 +165,28 @@ func (a *App) runScan(ctx context.Context, cmd *cobra.Command) error {
 		return a.explainRoots(ctx, roots, asJSON)
 	}
 
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+
 	svc := scan.New(a.Store, a.Policy)
-	out, err := svc.Run(ctx, scan.Options{Roots: roots, Full: full, Workers: a.Cfg.Workers})
+	opts := scan.Options{Roots: roots, Full: full, Workers: a.Cfg.Workers, RetainScans: a.Cfg.RetainScans}
+	if !quiet {
+		fmt.Fprintln(a.Err, "Escaneando… (progreso en stderr; nada se modifica hasta terminar)")
+		opts.ProgressEvery = 4096
+		opts.Progress = func(p scanner.Progress) {
+			fmt.Fprintf(a.Err, "  %d dirs · %d entradas · %s · %s\n",
+				p.Directories, p.Entries, render.FormatBytes(p.AllocatedBytes),
+				render.Redact(p.Current, a.Home, false))
+		}
+	}
+	out, err := svc.Run(ctx, opts)
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("scan cancelado por --timeout %s; el índice parcial se revirtió", timeout)
+		}
 		return err
 	}
 
@@ -170,7 +195,7 @@ func (a *App) runScan(ctx context.Context, cmd *cobra.Command) error {
 		ScanID: out.Scan.ID, Roots: out.Scan.Roots,
 		Entries: res.Totals.Entries, Allocated: res.Totals.AllocatedBytes,
 		Logical: res.Totals.LogicalBytes, ByClass: res.ByClass,
-		Inaccessible: res.Inaccessible, Partial: res.Partial,
+		Inaccessible: res.Inaccessible, Partial: res.Partial, Pruned: out.Pruned,
 	}
 	if asJSON {
 		if err := writeJSON(a.Out, output); err != nil {
@@ -178,6 +203,9 @@ func (a *App) runScan(ctx context.Context, cmd *cobra.Command) error {
 		}
 	} else {
 		a.renderScan(res, out.Scan.Roots)
+		if out.Pruned > 0 {
+			fmt.Fprintf(a.Out, "Índice: %d scan(s) antiguo(s) eliminado(s) (retención: %d)\n", out.Pruned, a.Cfg.RetainScans)
+		}
 	}
 	if res.Partial {
 		return domain.ErrPartial
