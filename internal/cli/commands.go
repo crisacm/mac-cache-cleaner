@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -175,8 +176,16 @@ func (a *App) runScan(ctx context.Context, cmd *cobra.Command) error {
 	opts := scan.Options{Roots: roots, Full: full, Workers: a.Cfg.Workers, RetainScans: a.Cfg.RetainScans}
 	if !quiet {
 		fmt.Fprintln(a.Err, "Escaneando… (progreso en stderr; nada se modifica hasta terminar)")
-		opts.ProgressEvery = 4096
+		// Report often, but print at most ~twice a second so the display stays
+		// alive even when a single directory holds tens of thousands of files.
+		opts.ProgressEvery = 64
+		last := time.Time{}
 		opts.Progress = func(p scanner.Progress) {
+			now := time.Now()
+			if !last.IsZero() && now.Sub(last) < 500*time.Millisecond {
+				return
+			}
+			last = now
 			fmt.Fprintf(a.Err, "  %d dirs · %d entradas · %s · %s\n",
 				p.Directories, p.Entries, render.FormatBytes(p.AllocatedBytes),
 				render.Redact(p.Current, a.Home, false))
