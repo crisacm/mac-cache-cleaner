@@ -33,6 +33,11 @@ memory.
   an explicit cancel) it stops promptly, returns `ctx.Err()` and the caller
   rolls the in-progress scan back (AGENTS.md §7, SEC-COD-04). `Scan` never
   reports a cancelled walk as a partial result.
+- **S-12** Streaming and progress are single-threaded for the consumer: entries
+  are handed to `Emit` in large batches (default 16.384) from **one** writer
+  goroutine, and `Progress` is invoked from **one** goroutine. Workers never
+  block on the sink and never hold the walker lock during I/O (`Emit` is a
+  producer/consumer boundary, not a shared-state section).
 
 ## API
 

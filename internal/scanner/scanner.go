@@ -70,6 +70,11 @@ type Options struct {
 // defaultProgressEvery is how often progress is reported by default.
 const defaultProgressEvery = 256
 
+// defaultBatchSize is how many entries are streamed to Emit before flushing.
+// Large batches keep the SQLite transaction count (and per-statement overhead)
+// low during a full scan (AGENTS.md §5.7: memory stays bounded by the batch).
+const defaultBatchSize = 16384
+
 // Result is the structured outcome of a scan.
 type Result struct {
 	Totals       domain.Totals
@@ -120,7 +125,7 @@ func (s *Scanner) Scan(ctx context.Context, opts Options) (Result, error) {
 	}
 	batchSize := opts.BatchSize
 	if batchSize <= 0 {
-		batchSize = 1000
+		batchSize = defaultBatchSize
 	}
 	progressEvery := opts.ProgressEvery
 	if progressEvery <= 0 {
@@ -166,6 +171,22 @@ func (s *Scanner) Scan(ctx context.Context, opts Options) (Result, error) {
 		w.queue.push(dirTask{root: root, path: root})
 	}
 
+	// With a streaming sink, persist batches on a dedicated writer goroutine so
+	// workers never block on SQLite (and never hold the walker lock during I/O).
+	if opts.Emit != nil {
+		w.batches = make(chan []domain.Entry, workers*2)
+		w.writerWG.Add(1)
+		go w.writeLoop()
+	}
+
+	// Deliver progress from a single goroutine: the callback is invoked
+	// concurrently by every worker otherwise (a data race for its consumers).
+	if opts.Progress != nil {
+		w.progress = make(chan Progress, workers*2)
+		w.progressWG.Add(1)
+		go w.progressLoop()
+	}
+
 	// Unblock workers waiting for work as soon as the context is cancelled, so
 	// Ctrl+C stops the walk promptly instead of draining the whole tree.
 	go func() {
@@ -184,20 +205,23 @@ func (s *Scanner) Scan(ctx context.Context, opts Options) (Result, error) {
 	wg.Wait()
 
 	// A cancelled walk is not a partial result: report it as a cancellation so
-	// the caller rolls the in-progress scan back (SEC-COD-04).
+	// the caller rolls the in-progress scan back (SEC-COD-04). The writer is
+	// stopped first so no write races the caller's rollback DELETE.
 	if err := ctx.Err(); err != nil {
+		w.closeProgress()
+		w.closeWriter()
 		return Result{}, err
 	}
 
 	w.emitFinalProgress()
+	w.closeProgress()
 
 	if err := w.failed(); err != nil {
-		return Result{}, err
-	}
-	if err := w.flush(); err != nil {
+		w.closeWriter()
 		return Result{}, err
 	}
 
+	// result enqueues the directory entries and then closes the writer.
 	return w.result(roots), nil
 }
 
@@ -224,6 +248,15 @@ type walker struct {
 	workers       int
 	batchSize     int
 	progressEvery int
+
+	// batches carries full batches from the workers to the writer goroutine.
+	// It is nil when Emit is nil (non-streaming callers collect in memory).
+	batches  chan []domain.Entry
+	writerWG sync.WaitGroup
+	// progress carries snapshots to a single goroutine so Progress is never
+	// invoked concurrently. It is nil when Progress is nil.
+	progress   chan Progress
+	progressWG sync.WaitGroup
 
 	mu            sync.Mutex
 	batch         []domain.Entry
@@ -286,8 +319,29 @@ func (w *walker) reportProgress(current string) {
 	}
 	w.mu.Unlock()
 	if due {
-		w.opts.Progress(snap)
+		// Non-blocking: a slow consumer must never stall the walk.
+		select {
+		case w.progress <- snap:
+		default:
+		}
 	}
+}
+
+// progressLoop invokes the consumer's callback from a single goroutine.
+func (w *walker) progressLoop() {
+	defer w.progressWG.Done()
+	for p := range w.progress {
+		w.opts.Progress(p)
+	}
+}
+
+// closeProgress stops the progress goroutine after the final snapshot.
+func (w *walker) closeProgress() {
+	if w.progress == nil {
+		return
+	}
+	close(w.progress)
+	w.progressWG.Wait()
 }
 
 // emitFinalProgress sends a last snapshot regardless of throttling.
@@ -304,7 +358,11 @@ func (w *walker) emitFinalProgress() {
 		Current:        w.current,
 	}
 	w.mu.Unlock()
-	w.opts.Progress(snap)
+	// Blocking: the final snapshot must be delivered (workers have stopped).
+	select {
+	case w.progress <- snap:
+	case <-w.ctx.Done():
+	}
 }
 
 func (w *walker) registerRoot(root string) {
@@ -483,13 +541,13 @@ func (w *walker) recordLeaf(path, parent string, fi os.FileInfo, kind domain.Kin
 	}
 
 	w.mu.Lock()
-	defer w.mu.Unlock()
 	w.addLeafTotals(class, kind, si.AllocatedBytes, si.LogicalBytes)
 	if agg := w.dirs[parent]; agg != nil {
 		agg.subAlloc += si.AllocatedBytes
 		agg.subLogic += si.LogicalBytes
 	}
-	w.emitLocked(entry)
+	w.mu.Unlock()
+	w.push(entry)
 }
 
 func (w *walker) recordOpaquePackage(path, parent string, fi os.FileInfo, tier domain.Tier) {
@@ -519,13 +577,13 @@ func (w *walker) recordOpaquePackage(path, parent string, fi os.FileInfo, tier d
 		Inode:          si.Inode,
 	}
 	w.mu.Lock()
-	defer w.mu.Unlock()
 	w.addLeafTotals(class, domain.KindPackage, alloc, logical)
 	if agg := w.dirs[parent]; agg != nil {
 		agg.subAlloc += alloc
 		agg.subLogic += logical
 	}
-	w.emitLocked(entry)
+	w.mu.Unlock()
+	w.push(entry)
 }
 
 // sumOpaque sums a library package's size without emitting its contents.
@@ -596,14 +654,78 @@ func (w *walker) addSubtreeTotals(sub domain.SubtreeTotals) {
 	}
 }
 
-func (w *walker) emitLocked(e domain.Entry) {
+// push stages one entry in the current batch and, when the batch is full,
+// hands it to the writer. It must be called WITHOUT holding w.mu.
+func (w *walker) push(e domain.Entry) {
+	w.mu.Lock()
 	w.batch = append(w.batch, e)
 	w.emitted++
+	var full []domain.Entry
 	if len(w.batch) >= w.batchSize {
-		if err := w.flushLocked(); err != nil {
-			w.err = err
+		full = w.batch
+		w.batch = nil
+	}
+	w.mu.Unlock()
+	w.enqueue(full)
+}
+
+// enqueue hands a batch to the writer goroutine (streaming) or collects it in
+// memory (non-streaming callers). It never holds w.mu.
+func (w *walker) enqueue(b []domain.Entry) {
+	if len(b) == 0 {
+		return
+	}
+	if w.batches == nil {
+		w.mu.Lock()
+		w.entries = append(w.entries, b...)
+		w.mu.Unlock()
+		return
+	}
+	select {
+	case w.batches <- b:
+	case <-w.ctx.Done():
+	}
+}
+
+// writeLoop persists batches off the walker lock. After the first error it
+// keeps draining so producers never block, and signals the walk to stop.
+func (w *walker) writeLoop() {
+	defer w.writerWG.Done()
+	for b := range w.batches {
+		if w.failed() != nil {
+			continue
+		}
+		if err := w.opts.Emit(w.ctx, b); err != nil {
+			w.mu.Lock()
+			if w.err == nil {
+				w.err = err
+			}
+			w.mu.Unlock()
+			w.cancel()
 		}
 	}
+}
+
+// closeWriter flushes the pending partial batch, closes the stream and waits
+// for the writer, so no write is in flight when the caller rolls back. It must
+// be called exactly once, after all batches have been enqueued.
+func (w *walker) closeWriter() {
+	w.mu.Lock()
+	pending := w.batch
+	w.batch = nil
+	w.mu.Unlock()
+
+	if w.batches == nil {
+		if len(pending) > 0 {
+			w.mu.Lock()
+			w.entries = append(w.entries, pending...)
+			w.mu.Unlock()
+		}
+		return
+	}
+	w.enqueue(pending)
+	close(w.batches)
+	w.writerWG.Wait()
 }
 
 // failed reports whether the walker has recorded a fatal error.
@@ -611,28 +733,6 @@ func (w *walker) failed() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.err
-}
-
-func (w *walker) flush() error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.flushLocked()
-}
-
-func (w *walker) flushLocked() error {
-	if len(w.batch) == 0 {
-		return nil
-	}
-	if w.opts.Emit != nil {
-		if err := w.opts.Emit(w.ctx, w.batch); err != nil {
-			w.err = err
-			return err
-		}
-	} else {
-		w.entries = append(w.entries, w.batch...)
-	}
-	w.batch = w.batch[:0]
-	return nil
 }
 
 func (w *walker) recordInaccessible(path string, err error) {
@@ -700,9 +800,13 @@ func (w *walker) result(roots []string) Result {
 			Inode:          agg.inode,
 		})
 	}
-	w.batch = append(w.batch, dirEntries...)
 	w.emitted += int64(len(dirEntries))
-	_ = w.flushLocked()
+	w.mu.Unlock()
+	w.enqueue(dirEntries)
+	// Flush the pending batch and stop the writer before reading the result.
+	w.closeWriter()
+
+	w.mu.Lock()
 	entries := w.entries
 	inaccessible := w.inaccessible
 	skipped := w.skipped

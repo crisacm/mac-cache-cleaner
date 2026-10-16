@@ -5,12 +5,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/crisacm/mac-cache-cleaner/internal/domain"
 )
 
-// SaveScan inserts a scan row.
+// SaveScan inserts a scan row and drops the report indexes so the following
+// bulk load does not maintain them row by row; FinishScan recreates them.
 func (s *Store) SaveScan(ctx context.Context, scan domain.Scan) error {
 	const q = `INSERT INTO scans (id, started_at, finished_at, root, full, partial)
 	           VALUES (?, ?, ?, ?, ?, ?)`
@@ -20,10 +22,14 @@ func (s *Store) SaveScan(ctx context.Context, scan domain.Scan) error {
 	if err != nil {
 		return fmt.Errorf("store: save scan: %w", err)
 	}
+	if err := s.dropReportIndexes(ctx); err != nil {
+		return err
+	}
 	return nil
 }
 
-// FinishScan records the completion time and partial flag of a scan.
+// FinishScan records the completion time and partial flag of a scan and
+// recreates the report indexes dropped by SaveScan.
 func (s *Store) FinishScan(ctx context.Context, id string, finishedAt time.Time, partial bool) error {
 	const q = `UPDATE scans SET finished_at = ?, partial = ? WHERE id = ?`
 	res, err := s.db.ExecContext(ctx, q, formatTime(finishedAt), boolToInt(partial), id)
@@ -32,6 +38,9 @@ func (s *Store) FinishScan(ctx context.Context, id string, finishedAt time.Time,
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return fmt.Errorf("store: finish scan %s: %w", id, domain.ErrNotFound)
+	}
+	if err := s.ensureReportIndexes(ctx); err != nil {
+		return err
 	}
 	return nil
 }
@@ -62,31 +71,51 @@ func (s *Store) LatestScan(ctx context.Context) (domain.Scan, error) {
 	return scan, err
 }
 
-// InsertEntries inserts or replaces entries in a single transaction.
+// insertChunkRows is how many rows go into a single multi-row INSERT. Kept well
+// below SQLite's variable limit (13 columns × rows).
+const insertChunkRows = 500
+
+// InsertEntries stores entries in one transaction using chunked multi-row
+// INSERTs. Entry IDs are unique per (scan, path), so a plain INSERT suffices
+// (no OR REPLACE, which would cost a PK lookup per row).
 func (s *Store) InsertEntries(ctx context.Context, entries []domain.Entry) error {
 	if len(entries) == 0 {
 		return nil
 	}
 	return s.withTx(ctx, func(tx *sql.Tx) error {
-		const q = `INSERT OR REPLACE INTO entries
-		    (entry_id, scan_id, path, parent, allocated_bytes, logical_bytes, mtime,
-		     is_dir, kind, data_class, bundle_id, dev, inode)
-		    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-		stmt, err := tx.PrepareContext(ctx, q)
-		if err != nil {
-			return fmt.Errorf("store: prepare insert entries: %w", err)
-		}
-		defer func() { _ = stmt.Close() }()
-		for _, e := range entries {
-			if _, err := stmt.ExecContext(ctx,
-				e.EntryID, e.ScanID, e.Path, e.Parent, e.AllocatedBytes, e.LogicalBytes,
-				formatTime(e.MTime), boolToInt(e.IsDir), string(e.Kind), string(e.DataClass),
-				e.BundleID, devToInt64(e.Dev), devToInt64(e.Inode)); err != nil {
-				return fmt.Errorf("store: insert entry %s: %w", e.Path, err)
+		for start := 0; start < len(entries); start += insertChunkRows {
+			end := start + insertChunkRows
+			if end > len(entries) {
+				end = len(entries)
+			}
+			if err := insertEntryChunk(ctx, tx, entries[start:end]); err != nil {
+				return err
 			}
 		}
 		return nil
 	})
+}
+
+// insertEntryChunk issues one multi-row INSERT for a batch of entries.
+func insertEntryChunk(ctx context.Context, tx *sql.Tx, batch []domain.Entry) error {
+	var q strings.Builder
+	q.WriteString(`INSERT INTO entries
+	    (entry_id, scan_id, path, parent, allocated_bytes, logical_bytes, mtime,
+	     is_dir, kind, data_class, bundle_id, dev, inode) VALUES `)
+	args := make([]any, 0, len(batch)*13)
+	for i, e := range batch {
+		if i > 0 {
+			q.WriteByte(',')
+		}
+		q.WriteString("(?,?,?,?,?,?,?,?,?,?,?,?,?)")
+		args = append(args, e.EntryID, e.ScanID, e.Path, e.Parent, e.AllocatedBytes, e.LogicalBytes,
+			formatTime(e.MTime), boolToInt(e.IsDir), string(e.Kind), string(e.DataClass),
+			e.BundleID, devToInt64(e.Dev), devToInt64(e.Inode))
+	}
+	if _, err := tx.ExecContext(ctx, q.String(), args...); err != nil {
+		return fmt.Errorf("store: insert entries: %w", err)
+	}
+	return nil
 }
 
 // EntriesByClass returns entries of a scan filtered by data class.

@@ -125,6 +125,26 @@ y este proyecto se adhiere a [Versionado Semántico](https://semver.org/lang/es/
   raíz y escribir `grant`. Incluye pruebas dirigidas por mensajes y vistas
   *golden* (`internal/tui/testdata/`).
 
+### Cambiado
+
+- **Escaneo mucho más rápido** (`internal/store`, `internal/scanner`). Medido con
+  `mcc scan --root /Applications` (296.738 entradas): **~18,6 s → ~5,7 s** en una
+  primera pasada y **~17,9 s → ~7,8 s** en repeticiones (retención 1). Cambios:
+  - escritura en **lotes multi-fila** (`INSERT` con 500 filas por sentencia) en
+    lugar de una sentencia por fila, y `INSERT` normal en vez de `OR REPLACE`;
+  - **una transacción por lote grande** (el scanner sube el lote por defecto de
+    1.000 a 16.384 entradas), reduciendo el número de commits;
+  - **índices de reporte diferidos**: se eliminan al iniciar el escaneo y se
+    crean una sola vez al terminar; también durante la poda. Si el proceso muere
+    a mitad, `Open` los recrea;
+  - **la BD ya no se escribe bajo el mutex del walker**: una goroutine escritora
+    dedicada consume los lotes, así el walk de los workers no se serializa;
+  - **`Progress` se entrega desde un único goroutine** (antes lo invocaban todos
+    los workers a la vez, lo que era una carrera de datos para sus consumidores);
+  - `CompleteScan` unifica "finalizar + podar" para crear los índices una sola vez;
+  - benchmarks nuevos (`BenchmarkScanWalk`, `BenchmarkInsertEntries`) para
+    medir walk vs escritura.
+
 ### Eliminado
 
 - **Borrado permanente**: se elimina por completo del código y la CLI

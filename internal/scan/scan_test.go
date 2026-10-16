@@ -40,12 +40,13 @@ func (f *fakeRepo) SaveScan(_ context.Context, s domain.Scan) error {
 	return nil
 }
 
-func (f *fakeRepo) FinishScan(_ context.Context, id string, _ time.Time, partial bool) error {
+func (f *fakeRepo) CompleteScan(_ context.Context, id string, _ time.Time, partial bool, keep int) (int64, error) {
 	f.finished[id] = true
 	s := f.scans[id]
 	s.Partial = partial
 	f.scans[id] = s
-	return nil
+	f.pruneKeep = append(f.pruneKeep, keep)
+	return 0, nil
 }
 
 func (f *fakeRepo) InsertEntries(_ context.Context, e []domain.Entry) error {
@@ -84,11 +85,6 @@ func (f *fakeRepo) DirMTime(context.Context, string, string) (time.Time, bool, e
 
 func (f *fakeRepo) CopySubtree(context.Context, string, string, string) (domain.SubtreeTotals, error) {
 	return domain.SubtreeTotals{}, nil
-}
-
-func (f *fakeRepo) PruneScans(_ context.Context, keep int) (int64, error) {
-	f.pruneKeep = append(f.pruneKeep, keep)
-	return 0, nil
 }
 
 // fakePolicy allows a fixed set of roots and blocks the rest.

@@ -81,6 +81,11 @@ func Open(ctx context.Context, dir string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	// A process killed mid-scan may have left the report indexes dropped.
+	if err := s.ensureReportIndexes(ctx); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	return s, nil
 }
 

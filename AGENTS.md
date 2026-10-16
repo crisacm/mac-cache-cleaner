@@ -90,6 +90,11 @@ Migrations are embedded from `migrations/` and applied on open. The store keeps
 - `entries(entry_id, scan_id, path, parent, allocated_bytes, logical_bytes, mtime, is_dir, kind, data_class, bundle_id, dev, inode)`
   — `entry_id` is stable (`domain.ComputeEntryID(scan_id, path)`); `dev`/`inode` enable hardlink dedup and apply-time revalidation.
   Indexes: `(scan_id, kind)`, `(scan_id, allocated_bytes DESC)`, `(scan_id, data_class)`, `(path)`.
+  The three `(scan_id, …)` report indexes are **dropped at scan start and
+  recreated once when the scan finishes** (`CompleteScan`/`PruneScans`), so the
+  bulk load and the retention delete do not maintain them row by row. `Open`
+  recreates them if a process was killed mid-scan; `(path)` is always kept for
+  incremental reuse.
 - `inaccessible(scan_id, path, reason)` — partial results (`SEC-ACC-05`).
 - `consents(root, tier, granted_at, revoked_at)`
 - `plans(plan_id, hash, created_at, expires_at, status, total_size)`

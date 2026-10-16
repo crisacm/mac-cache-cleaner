@@ -19,7 +19,8 @@ import (
 // Repo persists scan results (implemented by *store.Store).
 type Repo interface {
 	SaveScan(ctx context.Context, scan domain.Scan) error
-	FinishScan(ctx context.Context, id string, finishedAt time.Time, partial bool) error
+	// CompleteScan marks the scan finished and prunes older scans in one step.
+	CompleteScan(ctx context.Context, id string, finishedAt time.Time, partial bool, keep int) (int64, error)
 	InsertEntries(ctx context.Context, entries []domain.Entry) error
 	InsertInaccessible(ctx context.Context, id string, items []domain.Inaccessible) error
 	LatestScanID(ctx context.Context) (string, bool, error)
@@ -28,8 +29,6 @@ type Repo interface {
 	// Incremental reuse.
 	DirMTime(ctx context.Context, scanID, path string) (time.Time, bool, error)
 	CopySubtree(ctx context.Context, srcScan, dstScan, prefix string) (domain.SubtreeTotals, error)
-	// PruneScans keeps the newest `keep` completed scans (index retention).
-	PruneScans(ctx context.Context, keep int) (int64, error)
 }
 
 // DefaultRetainScans is how many completed scans are kept after a scan.
@@ -190,21 +189,21 @@ func (s *Service) Run(ctx context.Context, opts Options) (Outcome, error) {
 		s.rollback(ctx, scanID)
 		return Outcome{}, err
 	}
+	// Retention: keep the index bounded. Marking the scan finished and pruning
+	// older ones happen in one step, and only after a successful scan, so a
+	// failed or cancelled scan never leaves us without an index.
+	keep := opts.RetainScans
+	if keep <= 0 {
+		keep = DefaultRetainScans
+	}
 	finished := s.now()
-	if err := s.repo.FinishScan(ctx, scanID, finished, res.Partial); err != nil {
+	pruned, err := s.repo.CompleteScan(ctx, scanID, finished, res.Partial, keep)
+	if err != nil {
 		s.rollback(ctx, scanID)
 		return Outcome{}, err
 	}
 	scan.FinishedAt = finished
 	scan.Partial = res.Partial
-
-	// Retention: keep the index bounded. Runs only after a successful scan, so
-	// a failed or cancelled scan never leaves us without an index.
-	keep := opts.RetainScans
-	if keep <= 0 {
-		keep = DefaultRetainScans
-	}
-	pruned, _ := s.repo.PruneScans(ctx, keep)
 
 	return Outcome{Scan: scan, Result: res, Pruned: pruned}, nil
 }
