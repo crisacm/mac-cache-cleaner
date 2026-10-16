@@ -86,23 +86,32 @@ testdata/              # fake ~/Library fixtures
 Migrations are embedded from `migrations/` and applied on open. The store keeps
 **metadata only** (`SECURITY.md` `SEC-TRN-02`).
 
-- `scans(id, started_at, finished_at, root, full, partial)`
-- `entries(entry_id, scan_id, path, parent, allocated_bytes, logical_bytes, mtime, is_dir, kind, data_class, bundle_id, dev, inode)`
-  — `entry_id` is stable (`domain.ComputeEntryID(scan_id, path)`); `dev`/`inode` enable hardlink dedup and apply-time revalidation.
-  Indexes: `(scan_id, kind)`, `(scan_id, allocated_bytes DESC)`, `(scan_id, data_class)`, `(path)`.
-  The three `(scan_id, …)` report indexes are **dropped at scan start and
-  recreated once when the scan finishes** (`CompleteScan`/`PruneScans`), so the
-  bulk load and the retention delete do not maintain them row by row. `Open`
-  recreates them if a process was killed mid-scan; `(path)` is always kept for
-  incremental reuse.
-- `inaccessible(scan_id, path, reason)` — partial results (`SEC-ACC-05`).
+- `scans(id, started_at, finished_at, root, full, partial)` — run metadata only
+  (`entries` no longer holds one copy per scan).
+- `entries(path PRIMARY KEY, entry_id, scan_id, parent, allocated_bytes, logical_bytes, mtime, is_dir, kind, data_class, bundle_id, dev, inode)`
+  — **single generation**: one current view of the disk keyed by `path`.
+  `entry_id` is an opaque handle (`domain.ComputeEntryID(scan_id, path)`);
+  `scan_id` records the last scan that wrote the row; `dev`/`inode` enable
+  hardlink dedup and apply-time revalidation. `path` is the primary key
+  (index-friendly subtree deletes and reuse lookups).
+  Indexes: always `(parent)`; the rest — `entry_id` (unique), `(kind)`,
+  `(allocated_bytes DESC)`, `(data_class)` — are **dropped lazily on the first
+  write of a scan and recreated once at commit**, so a bulk load does not
+  maintain them row by row. A fully-reused scan writes nothing and pays nothing.
+  `Open` recreates them if a process was killed mid-scan.
+- `inaccessible(path, reason)` — partial results, single generation (`SEC-ACC-05`).
 - `consents(root, tier, granted_at, revoked_at)`
 - `plans(plan_id, hash, created_at, expires_at, status, total_size)`
   and `plan_items(plan_id, entry_id, path, dev, inode, size, mtime, data_class)`
 - `audit_log(id, at, action, path, size, plan_id, result, detail)` — append-only (`SEC-TRN-07`).
 - `mcp_calls(id, at, tool, args_summary, status, duration_ms, item_count)` — append-only MCP audit (`SEC-MCP-08`).
 
-Deleting a scan cascades to its `entries` and `inaccessible` rows (scan rollback).
+**Scan rollback** (`SEC-COD-04`): a scan writes through **one transaction**
+(`store.BeginScan` → `ScanTx`). `Commit` publishes it; `Rollback` discards it, so
+a cancelled or failed scan leaves the previous index intact. `DeleteScan` only
+removes a `scans` row (it never touches the single-generation index). The store
+uses **two connections** so a reader (e.g. the TUI) can keep reading the previous
+WAL snapshot while a scan holds its write transaction.
 
 ### Documentation map
 

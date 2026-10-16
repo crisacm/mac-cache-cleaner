@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"time"
-
-	"github.com/crisacm/mac-cache-cleaner/internal/domain"
 )
 
 // completedScanFilter selects scans that finished (in-progress or aborted scans
@@ -26,51 +24,15 @@ func (s *Store) CleanIncompleteScans(ctx context.Context, cutoff time.Time) (int
 	return n, nil
 }
 
-// PruneScans deletes old scans, keeping the newest `keep` *completed* ones.
-// The report indexes are dropped for the delete and recreated afterwards, so
-// the bulk delete does not maintain them row by row.
+// PruneScans deletes old scan rows, keeping the newest `keep` *completed* ones.
+// The index itself is single-generation (see DeleteScan), so pruning only
+// removes run metadata. Incomplete scans are always removed. Consents, plans,
+// the audit log and MCP calls are never touched.
 func (s *Store) PruneScans(ctx context.Context, keep int) (int64, error) {
-	if err := s.dropReportIndexes(ctx); err != nil {
-		return 0, err
-	}
-	n, err := s.prune(ctx, keep)
-	if err != nil {
-		return 0, err
-	}
-	if err := s.ensureReportIndexes(ctx); err != nil {
-		return 0, err
-	}
-	return n, nil
+	return s.prune(ctx, keep)
 }
 
-// CompleteScan marks a scan finished and prunes older scans in one step: the
-// scan becomes the current index and the previous rows are deleted before the
-// report indexes are (re)created once. Returns the number of scans removed.
-func (s *Store) CompleteScan(ctx context.Context, id string, finishedAt time.Time, partial bool, keep int) (int64, error) {
-	const q = `UPDATE scans SET finished_at = ?, partial = ? WHERE id = ?`
-	res, err := s.db.ExecContext(ctx, q, formatTime(finishedAt), boolToInt(partial), id)
-	if err != nil {
-		return 0, fmt.Errorf("store: finish scan: %w", err)
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return 0, fmt.Errorf("store: finish scan %s: %w", id, domain.ErrNotFound)
-	}
-	if err := s.dropReportIndexes(ctx); err != nil {
-		return 0, err
-	}
-	pruned, err := s.prune(ctx, keep)
-	if err != nil {
-		return 0, err
-	}
-	if err := s.ensureReportIndexes(ctx); err != nil {
-		return 0, err
-	}
-	return pruned, nil
-}
-
-// prune deletes old scans without touching the report indexes. Deleting a scan
-// cascades to its entries and inaccessible paths. Incomplete scans are always
-// removed. Consents, plans, the audit log and MCP calls are never touched.
+// prune deletes old scan rows, keeping the newest `keep` completed ones.
 func (s *Store) prune(ctx context.Context, keep int) (int64, error) {
 	if keep < 0 {
 		keep = 0

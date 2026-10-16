@@ -37,10 +37,10 @@ func (s *Store) TotalsByBundleID(ctx context.Context, scanID, bundleID string) (
 	return t, nil
 }
 
-// Paths lists every entry path in a scan (used by tests and tooling).
-func (s *Store) Paths(ctx context.Context, scanID string) ([]string, error) {
-	const q = `SELECT path FROM entries WHERE scan_id = ? ORDER BY path`
-	rows, err := s.db.QueryContext(ctx, q, scanID)
+// Paths lists every entry path in the index (used by tests and tooling).
+func (s *Store) Paths(ctx context.Context, _ string) ([]string, error) {
+	const q = `SELECT path FROM entries ORDER BY path`
+	rows, err := s.db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("store: query paths: %w", err)
 	}

@@ -28,14 +28,14 @@ type Policy interface {
 	Classify(path string) (domain.Tier, string, bool)
 }
 
-// IncrementalIndex lets a scan reuse unchanged subtrees. It is optional: when
-// nil, every scan walks the whole tree.
+// IncrementalIndex lets a scan reuse unchanged subtrees without rewriting
+// them. It is optional: when nil, every scan walks the whole tree.
 type IncrementalIndex interface {
-	// SubtreeMTime returns the mtime recorded for path in the previous scan.
-	SubtreeMTime(ctx context.Context, path string) (time.Time, bool, error)
-	// CopySubtree copies the previous scan's subtree under prefix into scanID
-	// and returns its aggregates.
-	CopySubtree(ctx context.Context, scanID, prefix string) (domain.SubtreeTotals, error)
+	// UnchangedDir reports whether path is a directory whose recorded mtime
+	// equals mtime. When so, its rows are already correct and the scan skips
+	// the subtree; alloc/logical are its stored subtree sizes so the parent can
+	// roll them up.
+	UnchangedDir(ctx context.Context, path string, mtime time.Time) (alloc, logical int64, ok bool, err error)
 }
 
 // Progress is a structured, non-printing snapshot of scan progress. It is
@@ -59,6 +59,10 @@ type Options struct {
 	// Emit, when set, receives batches of entries as they are produced
 	// (streaming). When nil, entries are collected in Result.Entries.
 	Emit func(ctx context.Context, entries []domain.Entry) error
+	// PruneDir, when set, is called for every directory the scan walked with
+	// the paths currently present in it, so the sink can delete entries that
+	// vanished. It is not called for reused (unchanged) directories.
+	PruneDir func(ctx context.Context, dir string, keep []string) error
 	// Progress, when set, receives throttled progress snapshots.
 	Progress func(Progress)
 	// ProgressEvery is how many directories to process between progress
@@ -385,6 +389,8 @@ func (w *walker) processDir(task dirTask) {
 	if w.failed() != nil || w.cancelled() {
 		return
 	}
+	// An unchanged directory (same mtime) is reused as-is: its rows are already
+	// correct, so neither it nor its subtree is walked or rewritten.
 	if w.opts.Incremental != nil && !w.opts.Full {
 		if w.tryReuse(task) {
 			return
@@ -396,40 +402,45 @@ func (w *walker) processDir(task dirTask) {
 		w.recordInaccessible(task.path, err)
 		return
 	}
+	keep := make([]string, 0, len(des))
 	for _, de := range des {
 		if w.failed() != nil || w.cancelled() {
 			return
 		}
+		keep = append(keep, filepath.Join(task.path, de.Name()))
 		w.handleChild(task.root, task.path, de)
+	}
+	// Remove stored entries for paths that no longer exist in this directory.
+	if w.opts.PruneDir != nil && w.failed() == nil && !w.cancelled() {
+		if err := w.opts.PruneDir(w.ctx, task.path, keep); err != nil {
+			w.fail(err)
+			w.cancel()
+		}
 	}
 }
 
-// tryReuse reuses an unchanged subtree from the previous scan.
+// tryReuse skips an unchanged directory: its rows already exist in the index,
+// so the scan neither rewrites it nor descends. Its stored subtree size is
+// rolled up into the parent.
 func (w *walker) tryReuse(task dirTask) bool {
 	fi, err := os.Lstat(task.path)
 	if err != nil {
 		return false
 	}
-	prev, ok, err := w.opts.Incremental.SubtreeMTime(w.ctx, task.path)
-	if err != nil || !ok || !prev.Equal(fi.ModTime()) {
-		return false
-	}
-	sub, err := w.opts.Incremental.CopySubtree(w.ctx, w.opts.ScanID, task.path)
-	if err != nil {
+	alloc, logical, ok, err := w.opts.Incremental.UnchangedDir(w.ctx, task.path, fi.ModTime())
+	if err != nil || !ok {
 		return false
 	}
 	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.addSubtreeTotals(sub)
-	w.emitted += sub.Totals.Entries
-	w.progressAlloc += sub.Totals.AllocatedBytes
+	w.progressAlloc += alloc
 	if parent := w.dirs[filepath.Dir(task.path)]; parent != nil {
-		parent.subAlloc += sub.Totals.AllocatedBytes
-		parent.subLogic += sub.Totals.LogicalBytes
+		parent.subAlloc += alloc
+		parent.subLogic += logical
 	}
-	// The copied subtree already contains this directory's entry, so drop it
-	// from the roll-up to avoid emitting (and counting) it twice.
+	// The reused directory keeps its stored row, so drop the in-memory copy to
+	// avoid emitting (and counting) it again.
 	delete(w.dirs, task.path)
+	w.mu.Unlock()
 	return true
 }
 
@@ -637,23 +648,6 @@ func (w *walker) addLeafTotals(class domain.DataClass, kind domain.Kind, alloc, 
 	w.byKind[kind] = k
 }
 
-func (w *walker) addSubtreeTotals(sub domain.SubtreeTotals) {
-	for class, t := range sub.ByClass {
-		cur := w.byClass[class]
-		cur.Entries += t.Entries
-		cur.AllocatedBytes += t.AllocatedBytes
-		cur.LogicalBytes += t.LogicalBytes
-		w.byClass[class] = cur
-	}
-	for kind, t := range sub.ByKind {
-		cur := w.byKind[kind]
-		cur.Entries += t.Entries
-		cur.AllocatedBytes += t.AllocatedBytes
-		cur.LogicalBytes += t.LogicalBytes
-		w.byKind[kind] = cur
-	}
-}
-
 // push stages one entry in the current batch and, when the batch is full,
 // hands it to the writer. It must be called WITHOUT holding w.mu.
 func (w *walker) push(e domain.Entry) {
@@ -696,11 +690,7 @@ func (w *walker) writeLoop() {
 			continue
 		}
 		if err := w.opts.Emit(w.ctx, b); err != nil {
-			w.mu.Lock()
-			if w.err == nil {
-				w.err = err
-			}
-			w.mu.Unlock()
+			w.fail(err)
 			w.cancel()
 		}
 	}
@@ -733,6 +723,15 @@ func (w *walker) failed() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.err
+}
+
+// fail records a fatal error (the first one wins).
+func (w *walker) fail(err error) {
+	w.mu.Lock()
+	if w.err == nil {
+		w.err = err
+	}
+	w.mu.Unlock()
 }
 
 func (w *walker) recordInaccessible(path string, err error) {

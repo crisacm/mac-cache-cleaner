@@ -5,14 +5,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/crisacm/mac-cache-cleaner/internal/domain"
 )
 
-// SaveScan inserts a scan row and drops the report indexes so the following
-// bulk load does not maintain them row by row; FinishScan recreates them.
+// SaveScan inserts a scan row and drops the deferred indexes so a following
+// bulk load does not maintain them row by row; FinishScan recreates them. The
+// transactional path (BeginScan/Commit) is used by the scanner instead.
 func (s *Store) SaveScan(ctx context.Context, scan domain.Scan) error {
 	const q = `INSERT INTO scans (id, started_at, finished_at, root, full, partial)
 	           VALUES (?, ?, ?, ?, ?, ?)`
@@ -22,14 +22,11 @@ func (s *Store) SaveScan(ctx context.Context, scan domain.Scan) error {
 	if err != nil {
 		return fmt.Errorf("store: save scan: %w", err)
 	}
-	if err := s.dropReportIndexes(ctx); err != nil {
-		return err
-	}
-	return nil
+	return s.dropIndexes(ctx)
 }
 
 // FinishScan records the completion time and partial flag of a scan and
-// recreates the report indexes dropped by SaveScan.
+// recreates the deferred indexes dropped by SaveScan.
 func (s *Store) FinishScan(ctx context.Context, id string, finishedAt time.Time, partial bool) error {
 	const q = `UPDATE scans SET finished_at = ?, partial = ? WHERE id = ?`
 	res, err := s.db.ExecContext(ctx, q, formatTime(finishedAt), boolToInt(partial), id)
@@ -39,10 +36,7 @@ func (s *Store) FinishScan(ctx context.Context, id string, finishedAt time.Time,
 	if n, _ := res.RowsAffected(); n == 0 {
 		return fmt.Errorf("store: finish scan %s: %w", id, domain.ErrNotFound)
 	}
-	if err := s.ensureReportIndexes(ctx); err != nil {
-		return err
-	}
-	return nil
+	return s.ensureIndexes(ctx)
 }
 
 // GetScan returns a scan by ID.
@@ -71,65 +65,26 @@ func (s *Store) LatestScan(ctx context.Context) (domain.Scan, error) {
 	return scan, err
 }
 
-// insertChunkRows is how many rows go into a single multi-row INSERT. Kept well
-// below SQLite's variable limit (13 columns × rows).
-const insertChunkRows = 500
-
-// InsertEntries stores entries in one transaction using chunked multi-row
-// INSERTs. Entry IDs are unique per (scan, path), so a plain INSERT suffices
-// (no OR REPLACE, which would cost a PK lookup per row).
+// InsertEntries upserts entries (keyed by path) in one transaction. Used by
+// tests and non-scan writers; the scanner writes through ScanTx.
 func (s *Store) InsertEntries(ctx context.Context, entries []domain.Entry) error {
 	if len(entries) == 0 {
 		return nil
 	}
 	return s.withTx(ctx, func(tx *sql.Tx) error {
-		for start := 0; start < len(entries); start += insertChunkRows {
-			end := start + insertChunkRows
-			if end > len(entries) {
-				end = len(entries)
-			}
-			if err := insertEntryChunk(ctx, tx, entries[start:end]); err != nil {
-				return err
-			}
-		}
-		return nil
+		return insertEntriesTx(ctx, tx, entries)
 	})
 }
 
-// insertEntryChunk issues one multi-row INSERT for a batch of entries.
-func insertEntryChunk(ctx context.Context, tx *sql.Tx, batch []domain.Entry) error {
-	var q strings.Builder
-	q.WriteString(`INSERT INTO entries
-	    (entry_id, scan_id, path, parent, allocated_bytes, logical_bytes, mtime,
-	     is_dir, kind, data_class, bundle_id, dev, inode) VALUES `)
-	args := make([]any, 0, len(batch)*13)
-	for i, e := range batch {
-		if i > 0 {
-			q.WriteByte(',')
-		}
-		q.WriteString("(?,?,?,?,?,?,?,?,?,?,?,?,?)")
-		args = append(args, e.EntryID, e.ScanID, e.Path, e.Parent, e.AllocatedBytes, e.LogicalBytes,
-			formatTime(e.MTime), boolToInt(e.IsDir), string(e.Kind), string(e.DataClass),
-			e.BundleID, devToInt64(e.Dev), devToInt64(e.Inode))
-	}
-	if _, err := tx.ExecContext(ctx, q.String(), args...); err != nil {
-		return fmt.Errorf("store: insert entries: %w", err)
-	}
-	return nil
+// EntriesByClass returns entries filtered by data class, largest first. The
+// index is single-generation, so scanID is ignored (kept for API stability).
+func (s *Store) EntriesByClass(ctx context.Context, _ string, class domain.DataClass) ([]domain.Entry, error) {
+	return s.queryEntries(ctx, `WHERE data_class = ? ORDER BY allocated_bytes DESC`, string(class))
 }
 
-// EntriesByClass returns entries of a scan filtered by data class.
-func (s *Store) EntriesByClass(ctx context.Context, scanID string, class domain.DataClass) ([]domain.Entry, error) {
-	return s.queryEntries(ctx,
-		`WHERE scan_id = ? AND data_class = ? ORDER BY allocated_bytes DESC`,
-		scanID, string(class))
-}
-
-// EntriesByKind returns entries of a scan filtered by kind.
-func (s *Store) EntriesByKind(ctx context.Context, scanID string, kind domain.Kind) ([]domain.Entry, error) {
-	return s.queryEntries(ctx,
-		`WHERE scan_id = ? AND kind = ? ORDER BY allocated_bytes DESC`,
-		scanID, string(kind))
+// EntriesByKind returns entries filtered by kind, largest first.
+func (s *Store) EntriesByKind(ctx context.Context, _ string, kind domain.Kind) ([]domain.Entry, error) {
+	return s.queryEntries(ctx, `WHERE kind = ? ORDER BY allocated_bytes DESC`, string(kind))
 }
 
 // EntryByID returns a single entry by its stable ID.
@@ -145,7 +100,7 @@ func (s *Store) EntryByID(ctx context.Context, entryID string) (domain.Entry, er
 }
 
 func (s *Store) queryEntries(ctx context.Context, where string, args ...any) ([]domain.Entry, error) {
-	// #nosec G202 -- where is a compile-time constant defined in this file, never user input.
+	// #nosec G202 -- where is a compile-time constant defined in this package, never user input.
 	q := `SELECT entry_id, scan_id, path, parent, allocated_bytes, logical_bytes, mtime,
 	             is_dir, kind, data_class, bundle_id, dev, inode
 	      FROM entries ` + where
@@ -154,7 +109,10 @@ func (s *Store) queryEntries(ctx context.Context, where string, args ...any) ([]
 		return nil, fmt.Errorf("store: query entries: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
+	return scanEntries(rows)
+}
 
+func scanEntries(rows *sql.Rows) ([]domain.Entry, error) {
 	var out []domain.Entry
 	for rows.Next() {
 		var (
@@ -185,31 +143,18 @@ func (s *Store) queryEntries(ctx context.Context, where string, args ...any) ([]
 	return out, nil
 }
 
-// InsertInaccessible records paths that could not be read for a scan.
-func (s *Store) InsertInaccessible(ctx context.Context, scanID string, items []domain.Inaccessible) error {
-	if len(items) == 0 {
-		return nil
-	}
+// InsertInaccessible replaces the stored inaccessible paths (the index is
+// single-generation). scanID is ignored.
+func (s *Store) InsertInaccessible(ctx context.Context, _ string, items []domain.Inaccessible) error {
 	return s.withTx(ctx, func(tx *sql.Tx) error {
-		const q = `INSERT OR REPLACE INTO inaccessible (scan_id, path, reason) VALUES (?, ?, ?)`
-		stmt, err := tx.PrepareContext(ctx, q)
-		if err != nil {
-			return fmt.Errorf("store: prepare inaccessible: %w", err)
-		}
-		defer func() { _ = stmt.Close() }()
-		for _, it := range items {
-			if _, err := stmt.ExecContext(ctx, scanID, it.Path, it.Reason); err != nil {
-				return fmt.Errorf("store: insert inaccessible %s: %w", it.Path, err)
-			}
-		}
-		return nil
+		return replaceInaccessibleTx(ctx, tx, items)
 	})
 }
 
-// Inaccessible returns the inaccessible paths of a scan.
-func (s *Store) Inaccessible(ctx context.Context, scanID string) ([]domain.Inaccessible, error) {
-	const q = `SELECT path, reason FROM inaccessible WHERE scan_id = ? ORDER BY path`
-	rows, err := s.db.QueryContext(ctx, q, scanID)
+// Inaccessible returns the stored inaccessible paths.
+func (s *Store) Inaccessible(ctx context.Context, _ string) ([]domain.Inaccessible, error) {
+	const q = `SELECT path, reason FROM inaccessible ORDER BY path`
+	rows, err := s.db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("store: query inaccessible: %w", err)
 	}
@@ -225,23 +170,48 @@ func (s *Store) Inaccessible(ctx context.Context, scanID string) ([]domain.Inacc
 	return out, rows.Err()
 }
 
-// Totals returns aggregate sizes for a scan.
-func (s *Store) Totals(ctx context.Context, scanID string) (domain.Totals, error) {
-	const q = `SELECT COUNT(*), COALESCE(SUM(allocated_bytes), 0), COALESCE(SUM(logical_bytes), 0)
-	           FROM entries WHERE scan_id = ?`
+// Totals returns aggregate sizes of the current index.
+func (s *Store) Totals(ctx context.Context, _ string) (domain.Totals, error) {
+	const q = `SELECT COUNT(*), COALESCE(SUM(allocated_bytes), 0), COALESCE(SUM(logical_bytes), 0) FROM entries`
 	var t domain.Totals
-	err := s.db.QueryRowContext(ctx, q, scanID).Scan(&t.Entries, &t.AllocatedBytes, &t.LogicalBytes)
-	if err != nil {
+	if err := s.db.QueryRowContext(ctx, q).Scan(&t.Entries, &t.AllocatedBytes, &t.LogicalBytes); err != nil {
 		return domain.Totals{}, fmt.Errorf("store: totals: %w", err)
 	}
 	return t, nil
 }
 
-// TotalsByClass returns aggregate sizes per data class for a scan.
-func (s *Store) TotalsByClass(ctx context.Context, scanID string) (map[domain.DataClass]domain.Totals, error) {
+// TotalsByClass returns aggregate sizes per data class over all entries.
+func (s *Store) TotalsByClass(ctx context.Context, _ string) (map[domain.DataClass]domain.Totals, error) {
 	const q = `SELECT data_class, COUNT(*), COALESCE(SUM(allocated_bytes), 0), COALESCE(SUM(logical_bytes), 0)
-	           FROM entries WHERE scan_id = ? GROUP BY data_class`
-	rows, err := s.db.QueryContext(ctx, q, scanID)
+	           FROM entries GROUP BY data_class`
+	return s.totalsBy(ctx, q)
+}
+
+// TotalsByKind returns aggregate sizes per kind over all entries.
+func (s *Store) TotalsByKind(ctx context.Context, _ string) (map[domain.Kind]domain.Totals, error) {
+	const q = `SELECT kind, COUNT(*), COALESCE(SUM(allocated_bytes), 0), COALESCE(SUM(logical_bytes), 0)
+	           FROM entries GROUP BY kind`
+	rows, err := s.db.QueryContext(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("store: totals by kind: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[domain.Kind]domain.Totals{}
+	for rows.Next() {
+		var (
+			kind string
+			t    domain.Totals
+		)
+		if err := rows.Scan(&kind, &t.Entries, &t.AllocatedBytes, &t.LogicalBytes); err != nil {
+			return nil, fmt.Errorf("store: scan totals row: %w", err)
+		}
+		out[domain.Kind(kind)] = t
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) totalsBy(ctx context.Context, q string) (map[domain.DataClass]domain.Totals, error) {
+	rows, err := s.db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("store: totals by class: %w", err)
 	}
@@ -258,6 +228,66 @@ func (s *Store) TotalsByClass(ctx context.Context, scanID string) (map[domain.Da
 		out[domain.DataClass(class)] = t
 	}
 	return out, rows.Err()
+}
+
+// ScanSummary reproduces the scanner's result aggregates from the stored index:
+// Totals sums the declared roots' subtree sizes, and by-class/by-kind totals
+// count only leaf-like entries (files, symlinks, packages) to avoid counting
+// directory subtree sizes twice.
+func (s *Store) ScanSummary(ctx context.Context, roots []string) (domain.Totals, map[domain.DataClass]domain.Totals, map[domain.Kind]domain.Totals, error) {
+	var total domain.Totals
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM entries`).Scan(&total.Entries); err != nil {
+		return domain.Totals{}, nil, nil, fmt.Errorf("store: scan summary count: %w", err)
+	}
+	if len(roots) > 0 {
+		q := `SELECT COALESCE(SUM(allocated_bytes), 0), COALESCE(SUM(logical_bytes), 0)
+		      FROM entries WHERE path IN (` + placeholders(len(roots)) + `)`
+		args := make([]any, len(roots))
+		for i, r := range roots {
+			args[i] = r
+		}
+		if err := s.db.QueryRowContext(ctx, q, args...).Scan(&total.AllocatedBytes, &total.LogicalBytes); err != nil {
+			return domain.Totals{}, nil, nil, fmt.Errorf("store: scan summary roots: %w", err)
+		}
+	}
+
+	const leafFilter = `WHERE kind IN ('file', 'symlink', 'package')`
+	byClass, err := s.totalsBy(ctx, `SELECT data_class, COUNT(*), COALESCE(SUM(allocated_bytes), 0), COALESCE(SUM(logical_bytes), 0) FROM entries `+leafFilter+` GROUP BY data_class`)
+	if err != nil {
+		return domain.Totals{}, nil, nil, err
+	}
+	byKindRows, err := s.db.QueryContext(ctx, `SELECT kind, COUNT(*), COALESCE(SUM(allocated_bytes), 0), COALESCE(SUM(logical_bytes), 0) FROM entries `+leafFilter+` GROUP BY kind`)
+	if err != nil {
+		return domain.Totals{}, nil, nil, fmt.Errorf("store: scan summary by kind: %w", err)
+	}
+	defer func() { _ = byKindRows.Close() }()
+	byKind := map[domain.Kind]domain.Totals{}
+	for byKindRows.Next() {
+		var (
+			kind string
+			t    domain.Totals
+		)
+		if err := byKindRows.Scan(&kind, &t.Entries, &t.AllocatedBytes, &t.LogicalBytes); err != nil {
+			return domain.Totals{}, nil, nil, fmt.Errorf("store: scan summary kind row: %w", err)
+		}
+		byKind[domain.Kind(kind)] = t
+	}
+	return total, byClass, byKind, byKindRows.Err()
+}
+
+// placeholders returns "?, ?, ?" for n arguments.
+func placeholders(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	b := make([]byte, 0, n*3-2)
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			b = append(b, ',', ' ')
+		}
+		b = append(b, '?')
+	}
+	return string(b)
 }
 
 func scanRow(row *sql.Row) (domain.Scan, error) {

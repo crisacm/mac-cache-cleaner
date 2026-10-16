@@ -24,8 +24,11 @@ memory.
   configured worker count (§5.6, SEC-COD-04).
 - **S-7** Library packages (`*.photoslibrary`, …) are opaque: one entry, size
   only, never descended (§5.9, SEC-ACC-03).
-- **S-8** Incremental scans reuse a directory's recorded `mtime` to skip and
-  copy unchanged subtrees (§5.8).
+- **S-8** Incremental scans reuse a directory's recorded `mtime`: an unchanged
+  directory is neither walked nor rewritten (its rows already exist in the
+  single-generation index), and its stored subtree size is rolled up (§5.8). A
+  directory the scan walks has its vanished children pruned (`PruneDir`).
+  `--full` disables reuse and forces a full walk.
 - **S-9** Metadata only: no file contents are read (SEC-ACC-02).
 - **S-10** Every result carries its data class (SEC-ACC-08). Roots that need
   consent or are forbidden are rejected before walking (SEC-ACC-04).
@@ -43,11 +46,13 @@ memory.
 
 - `New(policy) *Scanner`, `NewWithClock(policy, now)`
 - `(*Scanner) Scan(ctx, Options) (Result, error)`
-- `Options{ScanID, Roots, Full, Workers, BatchSize, Emit, Incremental}`
-- `IncrementalIndex` — `SubtreeMTime`, `CopySubtree`
+- `Options{ScanID, Roots, Full, Workers, BatchSize, Emit, PruneDir, Incremental}`
+- `IncrementalIndex` — `UnchangedDir(ctx, path, mtime) (alloc, logical, ok, err)`
 
-`store.NewIncremental(prevScan, scanID)` adapts a `*store.Store` to
-`IncrementalIndex`.
+`store.ScanTx` (from `store.BeginScan`) implements both `Emit` and
+`IncrementalIndex`, so a scan reads reuse info and writes through the same
+transaction. `scan.Run` recomputes the aggregates from the committed index
+(`store.ScanSummary`), since reused subtrees are not walked.
 
 ## Notes / limitations
 

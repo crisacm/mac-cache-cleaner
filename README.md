@@ -51,6 +51,8 @@ Los comandos de lectura aceptan `--json` y `--no-color`.
 
 `Ctrl+C` cancela de forma limpia: `mcc scan` detiene el escaneo y revierte el índice parcial; `mcc mcp` termina. Un segundo `Ctrl+C` fuerza la salida si algo no responde.
 
+Los rescaneos son **incrementales**: los directorios sin cambios (mismo `mtime`) no se vuelven a recorrer ni a escribir, así que repetir `mcc scan` es casi instantáneo. `--full` fuerza un recorrido completo del árbol.
+
 ### Interfaz interactiva (`mcc tui`)
 
 Requiere una terminal. Reutiliza los mismos servicios que la CLI y **no decide accesos por su cuenta** (todo pasa por `internal/policy`).

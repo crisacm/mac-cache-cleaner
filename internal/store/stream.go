@@ -10,13 +10,13 @@ import (
 // StreamEntries calls fn for every entry in a scan whose allocated size is at
 // least minBytes, largest first. It never loads the whole result set into
 // memory (SEC-COD-04); callers keep a bounded top-N.
-func (s *Store) StreamEntries(ctx context.Context, scanID string, minBytes int64, fn func(domain.Entry) error) error {
+func (s *Store) StreamEntries(ctx context.Context, _ string, minBytes int64, fn func(domain.Entry) error) error {
 	const q = `SELECT entry_id, scan_id, path, parent, allocated_bytes, logical_bytes, mtime,
 	                  is_dir, kind, data_class, bundle_id, dev, inode
 	           FROM entries
-	           WHERE scan_id = ? AND allocated_bytes >= ?
+	           WHERE allocated_bytes >= ?
 	           ORDER BY allocated_bytes DESC`
-	rows, err := s.db.QueryContext(ctx, q, scanID, minBytes)
+	rows, err := s.db.QueryContext(ctx, q, minBytes)
 	if err != nil {
 		return fmt.Errorf("store: stream entries: %w", err)
 	}

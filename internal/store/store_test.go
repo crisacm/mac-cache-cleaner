@@ -227,83 +227,83 @@ func TestPurgeClearsData(t *testing.T) {
 	require.Zero(t, info.Audit)
 }
 
-func TestIncrementalCopySubtree(t *testing.T) {
+func TestScanTxReuseAndPrune(t *testing.T) {
 	ctx := context.Background()
 	s := openTest(t)
 	mt := time.Now().UTC().Truncate(time.Second)
 
-	require.NoError(t, s.SaveScan(ctx, domain.Scan{ID: "s1", StartedAt: mt, Root: "/root"}))
-	entries := []domain.Entry{
+	// Seed the single-generation index with a directory and two children.
+	require.NoError(t, s.InsertEntries(ctx, []domain.Entry{
 		{
-			EntryID: domain.ComputeEntryID("s1", "/root/Library/Caches"), ScanID: "s1",
-			Path: "/root/Library/Caches", Parent: "/root/Library", IsDir: true,
-			Kind: domain.KindDir, DataClass: domain.ClassRegenerableCache,
+			EntryID: "d", ScanID: "s0", Path: "/root/Library/Caches", Parent: "/root/Library",
+			IsDir: true, Kind: domain.KindDir, DataClass: domain.ClassRegenerableCache,
 			MTime: mt, AllocatedBytes: 100, LogicalBytes: 100,
 		},
 		{
-			EntryID: domain.ComputeEntryID("s1", "/root/Library/Caches/a"), ScanID: "s1",
-			Path: "/root/Library/Caches/a", Parent: "/root/Library/Caches",
-			Kind: domain.KindFile, DataClass: domain.ClassRegenerableCache,
-			AllocatedBytes: 60, LogicalBytes: 60,
+			EntryID: "a", ScanID: "s0", Path: "/root/Library/Caches/a", Parent: "/root/Library/Caches",
+			Kind: domain.KindFile, DataClass: domain.ClassRegenerableCache, AllocatedBytes: 60, LogicalBytes: 60,
 		},
 		{
-			EntryID: domain.ComputeEntryID("s1", "/root/Library/Caches/b"), ScanID: "s1",
-			Path: "/root/Library/Caches/b", Parent: "/root/Library/Caches",
-			Kind: domain.KindFile, DataClass: domain.ClassRegenerableCache,
-			AllocatedBytes: 40, LogicalBytes: 40,
+			EntryID: "b", ScanID: "s0", Path: "/root/Library/Caches/b", Parent: "/root/Library/Caches",
+			Kind: domain.KindFile, DataClass: domain.ClassRegenerableCache, AllocatedBytes: 40, LogicalBytes: 40,
 		},
-	}
-	require.NoError(t, s.InsertEntries(ctx, entries))
-	require.NoError(t, s.FinishScan(ctx, "s1", mt.Add(time.Second), false))
+	}))
 
-	prev, ok, err := s.LatestScanID(ctx)
+	tx, err := s.BeginScan(ctx, domain.Scan{ID: "s1", StartedAt: mt, Root: "/root"})
+	require.NoError(t, err)
+
+	// A directory with the same mtime is reusable without walking it.
+	alloc, _, ok, err := tx.UnchangedDir(ctx, "/root/Library/Caches", mt)
 	require.NoError(t, err)
 	require.True(t, ok)
-	require.Equal(t, "s1", prev)
+	require.EqualValues(t, 100, alloc)
 
-	got, ok, err := s.DirMTime(ctx, "s1", "/root/Library/Caches")
+	// "b" vanished; pruning removes only the paths that are no longer present.
+	require.NoError(t, tx.PruneDir(ctx, "/root/Library/Caches", []string{"/root/Library/Caches/a"}))
+	require.NoError(t, tx.ReplaceInaccessible(ctx, nil))
+	_, err = tx.Commit(ctx, mt.Add(time.Second), false, 1)
 	require.NoError(t, err)
-	require.True(t, ok)
-	require.Equal(t, mt, got)
 
-	_, ok, err = s.DirMTime(ctx, "s1", "/root/nope")
+	files, err := s.EntriesByKind(ctx, "s1", domain.KindFile)
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	require.Equal(t, "/root/Library/Caches/a", files[0].Path, "the vanished path is gone")
+
+	// A directory whose mtime changed is not reusable.
+	tx2, err := s.BeginScan(ctx, domain.Scan{ID: "s2", StartedAt: mt.Add(time.Minute), Root: "/root"})
+	require.NoError(t, err)
+	_, _, ok, err = tx2.UnchangedDir(ctx, "/root/Library/Caches", mt.Add(time.Hour))
 	require.NoError(t, err)
 	require.False(t, ok)
-
-	require.NoError(t, s.SaveScan(ctx, domain.Scan{ID: "s2", StartedAt: mt.Add(time.Minute), Root: "/root"}))
-
-	sub, err := s.CopySubtree(ctx, "s1", "s2", "/root/Library/Caches")
-	require.NoError(t, err)
-	require.EqualValues(t, 100, sub.Totals.AllocatedBytes)
-	require.EqualValues(t, 3, sub.Totals.Entries)
-	require.EqualValues(t, 2, sub.ByClass[domain.ClassRegenerableCache].Entries)
-	require.EqualValues(t, 100, sub.ByClass[domain.ClassRegenerableCache].AllocatedBytes)
-
-	copied, err := s.EntriesByKind(ctx, "s2", domain.KindFile)
-	require.NoError(t, err)
-	require.Len(t, copied, 2)
-	require.NotEqual(t, entries[1].EntryID, copied[0].EntryID, "entry IDs must be re-derived for the new scan")
+	require.NoError(t, tx2.Rollback(ctx))
 }
 
-func TestIncrementalAdapter(t *testing.T) {
+func TestScanTxRollbackKeepsIndex(t *testing.T) {
 	ctx := context.Background()
 	s := openTest(t)
-	require.NoError(t, s.SaveScan(ctx, domain.Scan{ID: "s1", StartedAt: time.Now(), Root: "/root"}))
-	require.NoError(t, s.InsertEntries(ctx, []domain.Entry{{
-		EntryID: domain.ComputeEntryID("s1", "/root/c"), ScanID: "s1", Path: "/root/c",
-		IsDir: true, Kind: domain.KindDir, DataClass: domain.ClassRegenerableCache, MTime: time.Now(),
-	}}))
-	require.NoError(t, s.SaveScan(ctx, domain.Scan{ID: "s2", StartedAt: time.Now().Add(time.Second), Root: "/root"}))
+	require.NoError(t, s.InsertEntries(ctx, []domain.Entry{
+		{EntryID: "a", ScanID: "s0", Path: "/root/a", Kind: domain.KindFile, DataClass: domain.ClassAppData},
+	}))
 
-	inc := s.NewIncremental("s1", "s2")
-	_, ok, err := inc.SubtreeMTime(ctx, "/root/c")
+	tx, err := s.BeginScan(ctx, domain.Scan{ID: "s1", StartedAt: time.Now(), Root: "/root"})
 	require.NoError(t, err)
-	require.True(t, ok)
-	_, err = inc.CopySubtree(ctx, "s2", "/root/c")
+	require.NoError(t, tx.InsertEntries(ctx, []domain.Entry{
+		{EntryID: "x", ScanID: "s1", Path: "/root/x", Kind: domain.KindFile, DataClass: domain.ClassAppData},
+	}))
+	require.NoError(t, tx.Rollback(ctx))
+
+	// The rolled-back scan published nothing and left the previous index intact.
+	_, err = s.GetScan(ctx, "s1")
+	require.ErrorIs(t, err, domain.ErrNotFound)
+	totals, err := s.Totals(ctx, "s1")
 	require.NoError(t, err)
+	require.EqualValues(t, 1, totals.Entries)
+	paths, err := s.Paths(ctx, "s1")
+	require.NoError(t, err)
+	require.Equal(t, []string{"/root/a"}, paths)
 }
 
-func TestDeleteScanCascades(t *testing.T) {
+func TestDeleteScanKeepsSingleGenerationIndex(t *testing.T) {
 	ctx := context.Background()
 	s := openTest(t)
 	require.NoError(t, s.SaveScan(ctx, domain.Scan{ID: "s1", StartedAt: time.Now(), Root: "/root"}))
@@ -311,21 +311,15 @@ func TestDeleteScanCascades(t *testing.T) {
 		EntryID: "e1", ScanID: "s1", Path: "/root/f", Kind: domain.KindFile,
 		DataClass: domain.ClassRegenerableCache,
 	}}))
-	require.NoError(t, s.InsertInaccessible(ctx, "s1", []domain.Inaccessible{{Path: "/root/x", Reason: "denied"}}))
 
 	require.NoError(t, s.DeleteScan(ctx, "s1"))
 
 	_, err := s.GetScan(ctx, "s1")
 	require.ErrorIs(t, err, domain.ErrNotFound)
+	// The index is single-generation: removing a scan row does not remove it.
 	totals, err := s.Totals(ctx, "s1")
 	require.NoError(t, err)
-	require.Zero(t, totals.Entries, "entries must be removed by cascade")
-	paths, err := s.Paths(ctx, "s1")
-	require.NoError(t, err)
-	require.Empty(t, paths)
-	inc, err := s.Inaccessible(ctx, "s1")
-	require.NoError(t, err)
-	require.Empty(t, inc)
+	require.EqualValues(t, 1, totals.Entries)
 }
 
 func TestMCPCallAudit(t *testing.T) {

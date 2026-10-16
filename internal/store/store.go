@@ -58,9 +58,12 @@ func Open(ctx context.Context, dir string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("store: open %s: %w", path, err)
 	}
-	// A single connection avoids SQLite locking surprises and keeps writes
-	// serialized; the CLI is single-process (SEC-COD-04).
-	db.SetMaxOpenConns(1)
+	// A scan holds one write transaction for its whole duration (so it can roll
+	// back cleanly). A second connection lets readers (e.g. the TUI) keep
+	// reading the previous snapshot from the WAL while that transaction is open;
+	// WAL serializes writers and never blocks readers. busy_timeout handles the
+	// brief contention (SEC-COD-04).
+	db.SetMaxOpenConns(2)
 
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
@@ -81,8 +84,8 @@ func Open(ctx context.Context, dir string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	// A process killed mid-scan may have left the report indexes dropped.
-	if err := s.ensureReportIndexes(ctx); err != nil {
+	// A process killed mid-scan may have left the deferred indexes dropped.
+	if err := s.ensureIndexes(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
 	}

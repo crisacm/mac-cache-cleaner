@@ -127,6 +127,21 @@ y este proyecto se adhiere a [Versionado Semántico](https://semver.org/lang/es/
 
 ### Cambiado
 
+- **Índice de generación única + rollback transaccional** (`internal/store`,
+  `internal/scanner`, `internal/scan`). Antes `entries` guardaba **una copia del
+  árbol por escaneo**: cada pasada reescribía ~300k filas y borraba en cascada
+  la anterior. Ahora `entries` es **una sola vista actual del disco** con clave
+  `path`, y un escaneo escribe **una única transacción**: `Commit` publica y
+  `Rollback` descarta (así `Ctrl+C` deja intacto el índice anterior, `SEC-COD-04`).
+  El **incremental reutiliza sin reescribir**: un directorio con `mtime`
+  sin cambios no se recorre ni se escribe, y `PruneDir` elimina solo lo que
+  desapareció de los directorios que sí se recorrieron. Los índices se eliminan
+  de forma **perezosa** en la primera escritura y se recrean una vez al hacer
+  commit (un escaneo totalmente reutilizado no paga nada). La migración `00004`
+  conserva la generación más reciente, así que **no hace falta reescanear** tras
+  actualizar. Medido con `mcc scan --root /Applications` (296.738 entradas):
+  **1ª pasada ~18,6 s → ~4,0 s (~4,6×)** y **repetición ~17,9 s → ~0,25 s
+  (~70×)**. `--full` sigue forzando un recorrido completo.
 - **Escaneo mucho más rápido** (`internal/store`, `internal/scanner`). Medido con
   `mcc scan --root /Applications` (296.738 entradas): **~18,6 s → ~5,7 s** en una
   primera pasada y **~17,9 s → ~7,8 s** en repeticiones (retención 1). Cambios:

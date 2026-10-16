@@ -16,19 +16,25 @@ import (
 	"github.com/crisacm/mac-cache-cleaner/internal/scanner"
 )
 
+// Writer is a transactional, single-generation scan write. Everything a
+// scan writes goes through one writer; Commit publishes it and Rollback
+// discards it, so a cancelled scan leaves the previous index intact.
+type Writer interface {
+	InsertEntries(ctx context.Context, entries []domain.Entry) error
+	PruneDir(ctx context.Context, dir string, keep []string) error
+	UnchangedDir(ctx context.Context, path string, mtime time.Time) (alloc, logical int64, ok bool, err error)
+	ReplaceInaccessible(ctx context.Context, items []domain.Inaccessible) error
+	Commit(ctx context.Context, finishedAt time.Time, partial bool, keep int) (int64, error)
+	Rollback(ctx context.Context) error
+}
+
 // Repo persists scan results (implemented by *store.Store).
 type Repo interface {
-	SaveScan(ctx context.Context, scan domain.Scan) error
-	// CompleteScan marks the scan finished and prunes older scans in one step.
-	CompleteScan(ctx context.Context, id string, finishedAt time.Time, partial bool, keep int) (int64, error)
-	InsertEntries(ctx context.Context, entries []domain.Entry) error
-	InsertInaccessible(ctx context.Context, id string, items []domain.Inaccessible) error
 	LatestScanID(ctx context.Context) (string, bool, error)
-	// DeleteScan removes a scan and, by cascade, its entries (rollback).
-	DeleteScan(ctx context.Context, id string) error
-	// Incremental reuse.
-	DirMTime(ctx context.Context, scanID, path string) (time.Time, bool, error)
-	CopySubtree(ctx context.Context, srcScan, dstScan, prefix string) (domain.SubtreeTotals, error)
+	// BeginScan opens a transactional scan writer.
+	BeginScan(ctx context.Context, scan domain.Scan) (Writer, error)
+	// ScanSummary recomputes the aggregate result from the stored index.
+	ScanSummary(ctx context.Context, roots []string) (domain.Totals, map[domain.DataClass]domain.Totals, map[domain.Kind]domain.Totals, error)
 }
 
 // DefaultRetainScans is how many completed scans are kept after a scan.
@@ -112,8 +118,8 @@ func (s *Service) RootVerdict(ctx context.Context, root string) (policy.Verdict,
 	return s.policy.RootVerdict(ctx, root)
 }
 
-// Run scans the configured roots. On error or cancellation the in-progress
-// scan is rolled back so the previous complete scan stays the latest.
+// Run scans the configured roots. On error or cancellation the whole scan is
+// rolled back so the previous complete index stays current.
 func (s *Service) Run(ctx context.Context, opts Options) (Outcome, error) {
 	roots := opts.Roots
 	if len(roots) == 0 {
@@ -143,7 +149,7 @@ func (s *Service) Run(ctx context.Context, opts Options) (Outcome, error) {
 		scanID = id
 	}
 
-	prevID, hasPrev, err := s.repo.LatestScanID(ctx)
+	_, hasPrev, err := s.repo.LatestScanID(ctx)
 	if err != nil {
 		return Outcome{}, err
 	}
@@ -155,9 +161,13 @@ func (s *Service) Run(ctx context.Context, opts Options) (Outcome, error) {
 		Roots:     roots,
 		Full:      opts.Full,
 	}
-	if err := s.repo.SaveScan(ctx, scan); err != nil {
+
+	tx, err := s.repo.BeginScan(ctx, scan)
+	if err != nil {
 		return Outcome{}, err
 	}
+	// Any failure from here on discards the whole scan.
+	rollback := func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }
 
 	walkOpts := scanner.Options{
 		ScanID:        scanID,
@@ -167,66 +177,49 @@ func (s *Service) Run(ctx context.Context, opts Options) (Outcome, error) {
 		BatchSize:     opts.BatchSize,
 		Progress:      opts.Progress,
 		ProgressEvery: opts.ProgressEvery,
-		Emit: func(ctx context.Context, entries []domain.Entry) error {
-			return s.repo.InsertEntries(ctx, entries)
-		},
+		Emit:          tx.InsertEntries,
+		PruneDir:      tx.PruneDir,
 	}
 	if hasPrev && !opts.Full {
-		walkOpts.Incremental = repoIncremental{repo: s.repo, prev: prevID}
+		walkOpts.Incremental = tx
 	}
 
 	res, err := s.walker.Scan(ctx, walkOpts)
 	if err != nil {
-		s.rollback(ctx, scanID)
+		rollback()
 		return Outcome{}, err
 	}
 	if ctx.Err() != nil {
-		s.rollback(ctx, scanID)
+		rollback()
 		return Outcome{}, ctx.Err()
 	}
 
-	if err := s.repo.InsertInaccessible(ctx, scanID, res.Inaccessible); err != nil {
-		s.rollback(ctx, scanID)
+	if err := tx.ReplaceInaccessible(ctx, res.Inaccessible); err != nil {
+		rollback()
 		return Outcome{}, err
 	}
-	// Retention: keep the index bounded. Marking the scan finished and pruning
-	// older ones happen in one step, and only after a successful scan, so a
-	// failed or cancelled scan never leaves us without an index.
+
 	keep := opts.RetainScans
 	if keep <= 0 {
 		keep = DefaultRetainScans
 	}
 	finished := s.now()
-	pruned, err := s.repo.CompleteScan(ctx, scanID, finished, res.Partial, keep)
+	pruned, err := tx.Commit(ctx, finished, res.Partial, keep)
 	if err != nil {
-		s.rollback(ctx, scanID)
+		rollback()
 		return Outcome{}, err
 	}
+
+	// Recompute the aggregates from the committed index: reused subtrees were
+	// not walked, so the scanner's in-memory totals would undercount.
+	totals, byClass, byKind, err := s.repo.ScanSummary(ctx, roots)
+	if err != nil {
+		return Outcome{}, err
+	}
+	res.Totals, res.ByClass, res.ByKind = totals, byClass, byKind
+
 	scan.FinishedAt = finished
 	scan.Partial = res.Partial
 
 	return Outcome{Scan: scan, Result: res, Pruned: pruned}, nil
-}
-
-// rollback deletes a partially written scan, best effort.
-func (s *Service) rollback(ctx context.Context, scanID string) {
-	// Use a context detached from cancellation so rollback still runs when the
-	// scan was cancelled.
-	_ = s.repo.DeleteScan(context.WithoutCancel(ctx), scanID)
-}
-
-// repoIncremental adapts Repo to scanner.IncrementalIndex.
-type repoIncremental struct {
-	repo Repo
-	prev string
-}
-
-// SubtreeMTime implements scanner.IncrementalIndex.
-func (r repoIncremental) SubtreeMTime(ctx context.Context, path string) (time.Time, bool, error) {
-	return r.repo.DirMTime(ctx, r.prev, path)
-}
-
-// CopySubtree implements scanner.IncrementalIndex.
-func (r repoIncremental) CopySubtree(ctx context.Context, scanID, prefix string) (domain.SubtreeTotals, error) {
-	return r.repo.CopySubtree(ctx, r.prev, scanID, prefix)
 }

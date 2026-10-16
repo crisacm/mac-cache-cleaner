@@ -246,36 +246,32 @@ func TestScanNoProgressCallbackIsSafe(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// stubIncremental reports every directory as unchanged and returns a canned
-// subtree, exercising the incremental path without a store.
+// stubIncremental reports a directory as unchanged when its mtime matches the
+// recorded one, exercising the incremental path without a store.
 type stubIncremental struct {
-	mtime time.Time
-	sub   domain.SubtreeTotals
-	calls int
+	mtime   time.Time
+	alloc   int64
+	logical int64
+	calls   int
 }
 
-func (s *stubIncremental) SubtreeMTime(context.Context, string) (time.Time, bool, error) {
-	return s.mtime, true, nil
-}
-
-func (s *stubIncremental) CopySubtree(_ context.Context, _, _ string) (domain.SubtreeTotals, error) {
+func (s *stubIncremental) UnchangedDir(_ context.Context, _ string, mtime time.Time) (int64, int64, bool, error) {
 	s.calls++
-	sub := s.sub
-	sub.ByClass = map[domain.DataClass]domain.Totals{}
-	sub.ByKind = map[domain.Kind]domain.Totals{}
-	return sub, nil
+	if mtime.Equal(s.mtime) {
+		return s.alloc, s.logical, true, nil
+	}
+	return 0, 0, false, nil
 }
 
-func TestIncrementalReuseDoesNotDoubleCount(t *testing.T) {
+// TestIncrementalReuseSkipsUnchangedDir verifies that a directory whose mtime is
+// unchanged is not walked and not re-emitted.
+func TestIncrementalReuseSkipsUnchangedDir(t *testing.T) {
 	home := buildFixture(t)
 	caches := filepath.Join(home, "Library", "Caches")
 	fi, err := os.Stat(caches)
 	require.NoError(t, err)
 
-	inc := &stubIncremental{
-		mtime: fi.ModTime(),
-		sub:   domain.SubtreeTotals{Totals: domain.Totals{Entries: 5, AllocatedBytes: 1234, LogicalBytes: 1234}},
-	}
+	inc := &stubIncremental{mtime: fi.ModTime(), alloc: 1234, logical: 1234}
 	s := New(fakePolicy{})
 	res, err := s.Scan(context.Background(), Options{
 		ScanID:      "scan-1",
@@ -283,8 +279,8 @@ func TestIncrementalReuseDoesNotDoubleCount(t *testing.T) {
 		Incremental: inc,
 	})
 	require.NoError(t, err)
-	require.Equal(t, 1, inc.calls, "the unchanged root must be reused once")
-	require.EqualValues(t, 5, res.Totals.Entries, "reused entries counted exactly once")
+	require.Equal(t, 1, inc.calls, "the unchanged root must be checked and reused once")
+	require.EqualValues(t, 0, res.Totals.Entries, "a reused subtree is not walked")
 	for _, e := range res.Entries {
 		require.NotEqual(t, caches, e.Path, "a reused directory must not be re-emitted")
 	}
