@@ -17,7 +17,9 @@ El detalle está en [`SECURITY.md`](./SECURITY.md) §8.
 
 ## Conectar un cliente
 
-Necesitas la ruta absoluta al binario (`make build` genera `./bin/mcc`).
+Necesitas la ruta absoluta al binario. Con Homebrew es `$(brew --prefix)/bin/mcc`
+(o simplemente `mcc` si está en el `PATH`); si compilas desde el código,
+`make build` genera `./bin/mcc`.
 
 **Genérico** (formato `mcpServers`):
 
