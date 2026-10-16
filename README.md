@@ -47,7 +47,9 @@ mcc mcp                                       # servidor MCP (stdio) para agente
 
 Los comandos de lectura aceptan `--json` y `--no-color`.
 
-**Códigos de salida:** `0` éxito · `1` error general · `2` uso incorrecto · `3` resultado parcial (rutas inaccesibles) · `4` bloqueado por política / falta consentimiento.
+**Códigos de salida:** `0` éxito · `1` error general · `2` uso incorrecto · `3` resultado parcial (rutas inaccesibles) · `4` bloqueado por política / falta consentimiento · `130` cancelado por el usuario (Ctrl+C).
+
+`Ctrl+C` cancela de forma limpia: `mcc scan` detiene el escaneo y revierte el índice parcial; `mcc mcp` termina. Un segundo `Ctrl+C` fuerza la salida si algo no responde.
 
 ### Interfaz interactiva (`mcc tui`)
 

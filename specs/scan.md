@@ -29,6 +29,10 @@ memory.
 - **S-9** Metadata only: no file contents are read (SEC-ACC-02).
 - **S-10** Every result carries its data class (SEC-ACC-08). Roots that need
   consent or are forbidden are rejected before walking (SEC-ACC-04).
+- **S-11** The walk observes the context: on cancellation (`Ctrl+C`, timeout or
+  an explicit cancel) it stops promptly, returns `ctx.Err()` and the caller
+  rolls the in-progress scan back (AGENTS.md §7, SEC-COD-04). `Scan` never
+  reports a cancelled walk as a partial result.
 
 ## API
 

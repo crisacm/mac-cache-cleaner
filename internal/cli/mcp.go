@@ -1,9 +1,13 @@
 package cli
 
 import (
+	"context"
+	"errors"
+
 	"github.com/spf13/cobra"
 
 	"github.com/crisacm/mac-cache-cleaner/internal/cleaner"
+	"github.com/crisacm/mac-cache-cleaner/internal/domain"
 	"github.com/crisacm/mac-cache-cleaner/internal/mcp"
 	"github.com/crisacm/mac-cache-cleaner/internal/scan"
 )
@@ -25,7 +29,14 @@ func (a *App) newMCPCmd() *cobra.Command {
 				Scan:    scan.New(a.Store, a.Policy),
 				Cleaner: cleaner.New(a.Store, a.Policy, a.Home),
 			})
-			return srv.Serve(cmd.Context(), a.In, a.Out)
+			// Ctrl+C (SIGINT) cancels the context; a clean shutdown, exit 130.
+			if err := srv.Serve(cmd.Context(), a.In, a.Out); err != nil {
+				if errors.Is(err, context.Canceled) {
+					return domain.ErrCanceled
+				}
+				return err
+			}
+			return nil
 		},
 	}
 }

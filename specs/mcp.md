@@ -43,6 +43,8 @@ through `internal/policy`.
   `tools/list`, `tools/call`. Unknown methods return a JSON-RPC error.
 - No scan is triggered. Tools read the latest scan; `get_status` reports when
   there is none or it is stale.
+- The read loop observes the context: `Ctrl+C` (SIGINT) stops it promptly and
+  returns `ctx.Err()` (exit code 130) even while blocked on stdin.
 
 ## Tools
 

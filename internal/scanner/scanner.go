@@ -166,6 +166,13 @@ func (s *Scanner) Scan(ctx context.Context, opts Options) (Result, error) {
 		w.queue.push(dirTask{root: root, path: root})
 	}
 
+	// Unblock workers waiting for work as soon as the context is cancelled, so
+	// Ctrl+C stops the walk promptly instead of draining the whole tree.
+	go func() {
+		<-ctx.Done()
+		w.queue.close()
+	}()
+
 	var wg sync.WaitGroup
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
@@ -175,6 +182,12 @@ func (s *Scanner) Scan(ctx context.Context, opts Options) (Result, error) {
 		}()
 	}
 	wg.Wait()
+
+	// A cancelled walk is not a partial result: report it as a cancellation so
+	// the caller rolls the in-progress scan back (SEC-COD-04).
+	if err := ctx.Err(); err != nil {
+		return Result{}, err
+	}
 
 	w.emitFinalProgress()
 
@@ -237,6 +250,9 @@ func (w *walker) worker() {
 		if !ok {
 			return
 		}
+		if w.ctx.Err() != nil {
+			return
+		}
 		w.processDir(task)
 		w.queue.done()
 		w.reportProgress(task.path)
@@ -245,6 +261,10 @@ func (w *walker) worker() {
 		}
 	}
 }
+
+// cancelled reports whether the walk must stop because the context was
+// cancelled (Ctrl+C, timeout or an explicit cancel).
+func (w *walker) cancelled() bool { return w.ctx.Err() != nil }
 
 // reportProgress aggregates counters and invokes the progress callback when
 // it is due. The callback runs outside the walker lock.
@@ -304,7 +324,7 @@ func (w *walker) registerRoot(root string) {
 
 // processDir reads a directory and dispatches its children.
 func (w *walker) processDir(task dirTask) {
-	if w.failed() != nil {
+	if w.failed() != nil || w.cancelled() {
 		return
 	}
 	if w.opts.Incremental != nil && !w.opts.Full {
@@ -319,7 +339,7 @@ func (w *walker) processDir(task dirTask) {
 		return
 	}
 	for _, de := range des {
-		if w.failed() != nil {
+		if w.failed() != nil || w.cancelled() {
 			return
 		}
 		w.handleChild(task.root, task.path, de)
@@ -475,6 +495,10 @@ func (w *walker) recordLeaf(path, parent string, fi os.FileInfo, kind domain.Kin
 func (w *walker) recordOpaquePackage(path, parent string, fi os.FileInfo, tier domain.Tier) {
 	alloc, logical, err := w.sumOpaque(path)
 	if err != nil {
+		// A cancellation is not an inaccessible path.
+		if w.cancelled() {
+			return
+		}
 		w.recordInaccessible(path, err)
 		return
 	}
@@ -511,6 +535,9 @@ func (w *walker) sumOpaque(root string) (alloc, logical int64, err error) {
 		return 0, 0, err
 	}
 	for _, de := range des {
+		if err := w.ctx.Err(); err != nil {
+			return 0, 0, err
+		}
 		p := filepath.Join(root, de.Name())
 		fi, lerr := os.Lstat(p)
 		if lerr != nil {

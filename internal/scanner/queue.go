@@ -61,3 +61,13 @@ func (q *dirQueue) done() {
 		q.cond.Broadcast()
 	}
 }
+
+// close wakes every waiter so workers blocked in pop return instead of waiting
+// forever. It is used to abort the walk on cancellation; it is idempotent and
+// safe to call after the queue has already drained.
+func (q *dirQueue) close() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.closed = true
+	q.cond.Broadcast()
+}

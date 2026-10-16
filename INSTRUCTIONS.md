@@ -2,6 +2,8 @@
 
 Este documento explica **cómo usar MCC desde un agente de IA**. MCC expone su índice con el comando **`mcc mcp`** (servidor MCP sobre **stdio**, JSON-RPC); el agente **lee** y **propone un plan**, y **la persona lo aplica**.
 
+Ejecutado a mano desde una terminal, `mcc mcp` (y `mcc scan`) se cancelan con **`Ctrl+C`** de forma limpia y salen con código **130**; un segundo `Ctrl+C` fuerza la salida.
+
 ## Reglas de seguridad (resumen)
 
 El detalle está en [`SECURITY.md`](./SECURITY.md) §8.

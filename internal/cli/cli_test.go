@@ -84,6 +84,17 @@ func TestUsageErrorExitCode(t *testing.T) {
 	require.Contains(t, errOut, "usage")
 }
 
+func TestScanCanceledExitCode(t *testing.T) {
+	app := newTestApp(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // simulate Ctrl+C before/while scanning
+
+	errOut := app.Err.(*bytes.Buffer)
+	code := app.Execute(ctx, []string{"scan"})
+	require.Equal(t, domain.ExitCanceled, code)
+	require.Contains(t, errOut.String(), "cancelado")
+}
+
 func TestScanBlockedRootExitCode(t *testing.T) {
 	app := newTestApp(t)
 	// Tier 2 is never accessible: exit code 4.
@@ -110,4 +121,7 @@ func TestExitCodeMapping(t *testing.T) {
 	require.Equal(t, domain.ExitUsage, exitCode(domain.ErrUsage))
 	require.Equal(t, domain.ExitBlocked, exitCode(domain.ErrBlocked))
 	require.Equal(t, domain.ExitPartial, exitCode(domain.ErrPartial))
+	// Ctrl+C maps to 128+SIGINT.
+	require.Equal(t, domain.ExitCanceled, exitCode(domain.ErrCanceled))
+	require.Equal(t, domain.ExitCanceled, exitCode(context.Canceled))
 }

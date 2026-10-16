@@ -125,7 +125,7 @@ mcc mcp                                # phase 3: MCP server (stdio) for agents
 
 - Read commands support `--json` and `--no-color`. JSON output is a stable contract: do not rename/remove fields without a SemVer-aware changelog entry.
 - Human output goes to stdout; logs/diagnostics go to stderr.
-- Exit codes: `0` success, `1` generic error, `2` usage error, `3` partial result (inaccessible paths), `4` blocked by policy / consent required.
+- Exit codes: `0` success, `1` generic error, `2` usage error, `3` partial result (inaccessible paths), `4` blocked by policy / consent required, `130` cancelled by the user (Ctrl+C, `128+SIGINT`).
 
 **`mcc tui` (Phase 2)** reuses the same services and contains no logic of its own:
 
@@ -172,7 +172,7 @@ Cache locations live in a data-driven registry in `internal/cache`. Add new loca
 - Subprocesses (e.g. `osascript` for Trash): absolute binary path, explicit argv, no `sh -c`, never interpolate paths into script text.
 - File and app names are **untrusted data**: strip/escape control and ANSI sequences in terminal output.
 - Store dir `0700`, files `0600`, no telemetry, no network, audit log of every applied action.
-- All I/O honors `context.Context`; Ctrl+C cancels cleanly without leaving partial state.
+- All I/O honors `context.Context`; Ctrl+C cancels cleanly without leaving partial state (a cancelled scan is rolled back). Every long-running/blocking command (`scan`, `mcp`) must observe `ctx` so SIGINT stops it; a second Ctrl+C forces the exit as a safety net (`130`).
 - **Never** run destructive operations against the real home directory in tests. Use `t.TempDir()` and `testdata/`.
 
 ## 8. Code Conventions

@@ -4,11 +4,12 @@ import "errors"
 
 // Process exit codes (AGENTS.md §4).
 const (
-	ExitOK      = 0
-	ExitError   = 1
-	ExitUsage   = 2
-	ExitPartial = 3
-	ExitBlocked = 4
+	ExitOK       = 0
+	ExitError    = 1
+	ExitUsage    = 2
+	ExitPartial  = 3
+	ExitBlocked  = 4
+	ExitCanceled = 130 // 128 + SIGINT: the user cancelled with Ctrl+C
 )
 
 // Sentinel errors that callers (internal/cli) map to exit codes.
@@ -22,4 +23,7 @@ var (
 	// ErrPartial means the operation completed with inaccessible paths
 	// (maps to exit code 3).
 	ErrPartial = errors.New("partial result")
+	// ErrCanceled means the user cancelled the operation (Ctrl+C). It maps to
+	// exit code 130 (128 + SIGINT).
+	ErrCanceled = errors.New("cancelado por el usuario")
 )

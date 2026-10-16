@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/crisacm/mac-cache-cleaner/internal/cli"
@@ -25,6 +26,14 @@ func main() {
 func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// signal.NotifyContext swallows SIGINT (Ctrl+C only cancels ctx). Arm a
+	// second Ctrl+C as a kill switch so a command that ignores cancellation can
+	// still be terminated. The TUI is skipped: bubbletea exits on the first
+	// signal and restores the terminal, and a forced os.Exit would corrupt it.
+	if !isTUICommand(os.Args[1:]) {
+		go watchInterrupts()
+	}
 
 	// MCC refuses to run as root (SEC-ACC-01).
 	if err := policy.EnsureNotRoot(); err != nil {
@@ -63,6 +72,37 @@ func run() int {
 
 	app := cli.New(home, cfg, pol, st, os.Stdin, os.Stdout, os.Stderr, isTTY)
 	return app.Execute(ctx, os.Args[1:])
+}
+
+// watchInterrupts prints a hint on the first SIGINT/SIGTERM and forces the exit
+// on the second, so Ctrl+C always terminates the process even if a running
+// command is not observing its context.
+func watchInterrupts() {
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigs)
+
+	first := true
+	for range sigs {
+		if first {
+			first = false
+			fmt.Fprintln(os.Stderr, "mcc: cancelando… (pulsa Ctrl+C otra vez para forzar la salida)")
+			continue
+		}
+		os.Exit(domain.ExitCanceled)
+	}
+}
+
+// isTUICommand reports whether the first non-flag argument is the tui command,
+// which manages its own signal handling and terminal state.
+func isTUICommand(args []string) bool {
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") {
+			continue
+		}
+		return a == "tui"
+	}
+	return false
 }
 
 func exitCode(err error) int {

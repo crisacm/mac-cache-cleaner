@@ -68,6 +68,8 @@ func exitCode(err error) int {
 	switch {
 	case err == nil:
 		return domain.ExitOK
+	case errors.Is(err, domain.ErrCanceled), errors.Is(err, context.Canceled):
+		return domain.ExitCanceled
 	case errors.Is(err, domain.ErrUsage):
 		return domain.ExitUsage
 	case errors.Is(err, domain.ErrBlocked):
@@ -193,6 +195,10 @@ func (a *App) runScan(ctx context.Context, cmd *cobra.Command) error {
 	}
 	out, err := svc.Run(ctx, opts)
 	if err != nil {
+		// Ctrl+C: the scanner stopped and scan.Run rolled the partial index back.
+		if errors.Is(err, context.Canceled) {
+			return fmt.Errorf("%w: scan cancelado; el índice parcial se revirtió", domain.ErrCanceled)
+		}
 		if errors.Is(err, context.DeadlineExceeded) {
 			return fmt.Errorf("scan cancelado por --timeout %s; el índice parcial se revirtió", timeout)
 		}

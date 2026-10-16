@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -463,4 +464,28 @@ func TestUnknownToolIsAudited(t *testing.T) {
 	require.Len(t, calls, 1)
 	require.Equal(t, "mcc_apply_plan", calls[0].Tool)
 	require.Equal(t, "unknown_tool", calls[0].Status)
+}
+
+// TestServeStopsOnContextCancel verifies that Serve returns promptly when the
+// context is cancelled even though the reader is blocked with no input (the
+// Ctrl+C case: a terminal that never sends more JSON-RPC).
+func TestServeStopsOnContextCancel(t *testing.T) {
+	s, _, _ := testServer(t)
+
+	pr, pw := io.Pipe()
+	defer func() { _ = pw.Close() }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var out bytes.Buffer
+	done := make(chan error, 1)
+	go func() { done <- s.Serve(ctx, pr, &out) }()
+
+	cancel()
+
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, context.Canceled, "cancellation must surface as context.Canceled")
+	case <-time.After(5 * time.Second):
+		t.Fatal("Serve did not stop after context cancellation")
+	}
 }

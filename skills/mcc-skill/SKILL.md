@@ -59,7 +59,9 @@ mcc permissions [show|grant|revoke <root>]    # política efectiva y consentimie
 mcc data show | purge                         # qué guarda y cómo borrarlo
 ```
 
-Códigos de salida: `0` ok · `1` error · `2` uso · `3` parcial (rutas inaccesibles) · `4` bloqueado/consentimiento.
+Códigos de salida: `0` ok · `1` error · `2` uso · `3` parcial (rutas inaccesibles) · `4` bloqueado/consentimiento · `130` cancelado por el usuario (Ctrl+C).
+
+`Ctrl+C` cancela de forma limpia (`mcc scan` revierte el índice parcial; `mcc mcp` termina). Un segundo `Ctrl+C` fuerza la salida.
 
 ### TUI (`mcc tui`)
 

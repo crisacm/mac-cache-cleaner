@@ -66,33 +66,55 @@ func New(deps Deps) *Server {
 	return s
 }
 
-// Serve reads JSON-RPC messages from in and writes responses to out until EOF.
+// readResult is one line (or terminal error) produced by the reader goroutine.
+type readResult struct {
+	line []byte
+	err  error
+}
+
+// Serve reads JSON-RPC messages from in and writes responses to out until EOF
+// or until ctx is cancelled (e.g. Ctrl+C). The blocking read runs in a separate
+// goroutine so cancellation is observed promptly; on cancel that goroutine may
+// remain blocked on the reader until the process exits, which is harmless.
 func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 	reader := bufio.NewReaderSize(in, 1<<20)
 	writer := bufio.NewWriter(out)
 	defer func() { _ = writer.Flush() }()
 
-	for {
-		line, err := reader.ReadBytes('\n')
-		if len(line) == 0 && err != nil {
-			if errors.Is(err, io.EOF) {
-				return nil
+	lines := make(chan readResult)
+	go func() {
+		defer close(lines)
+		for {
+			line, err := reader.ReadBytes('\n')
+			select {
+			case lines <- readResult{line: line, err: err}:
+			case <-ctx.Done():
+				return
 			}
-			return err
-		}
-		line = []byte(strings.TrimSpace(string(line)))
-		if len(line) == 0 {
 			if err != nil {
+				return
+			}
+		}
+	}()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case r, ok := <-lines:
+			if !ok {
 				return nil
 			}
-			continue
-		}
-
-		s.handleLine(ctx, line, writer)
-		_ = writer.Flush()
-
-		if err != nil {
-			return nil
+			if line := []byte(strings.TrimSpace(string(r.line))); len(line) > 0 {
+				s.handleLine(ctx, line, writer)
+				_ = writer.Flush()
+			}
+			if r.err != nil {
+				if errors.Is(r.err, io.EOF) {
+					return nil
+				}
+				return r.err
+			}
 		}
 	}
 }

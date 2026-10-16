@@ -289,3 +289,29 @@ func TestIncrementalReuseDoesNotDoubleCount(t *testing.T) {
 		require.NotEqual(t, caches, e.Path, "a reused directory must not be re-emitted")
 	}
 }
+
+// TestScanCancellationStopsWalk cancels the context while the walk is running
+// and requires the scan to stop promptly with context.Canceled (Ctrl+C).
+func TestScanCancellationStopsWalk(t *testing.T) {
+	home := buildFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := New(fakePolicy{}).Scan(ctx, Options{
+			ScanID:        "cancel-1",
+			Roots:         []string{home},
+			ProgressEvery: 1,
+			Progress:      func(Progress) { cancel() },
+		})
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, context.Canceled, "a cancelled walk must report cancellation")
+	case <-time.After(10 * time.Second):
+		t.Fatal("scan did not stop after cancellation")
+	}
+}

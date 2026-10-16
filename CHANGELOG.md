@@ -133,6 +133,22 @@ y este proyecto se adhiere a [Versionado Semántico](https://semver.org/lang/es/
   mover a la Papelera falla, el ítem se reporta como fallido y queda intacto.
   Endurece `SEC-DEL-04` (`SECURITY.md`).
 
+### Corregido
+
+- **`Ctrl+C` ya no se queda sin efecto.** `signal.NotifyContext` desactivaba el
+  comportamiento por defecto de `SIGINT` y sólo cancelaba un contexto; como el
+  escaneo y el servidor MCP no lo observaban, el proceso quedaba «congelado» y
+  era imposible de terminar con `Ctrl+C`. Ahora:
+  - el **scanner** comprueba el contexto durante el recorrido (cola de
+    directorios cancelable) y `mcc scan` se detiene al instante, revierte el
+    índice parcial y sale con **130**;
+  - `mcc mcp` observa el contexto y termina al primer `Ctrl+C` (antes se
+    bloqueaba para siempre en la lectura de `stdin`);
+  - un **segundo `Ctrl+C`** fuerza la salida como red de seguridad (excepto en
+    la TUI, que gestiona su propia señal y la restauración de la terminal).
+  Se añade el código de salida **`130`** (`128+SIGINT` = cancelado por el
+  usuario) al contrato (`AGENTS.md` §4) y a la documentación.
+
 ### Notas / decisiones
 
 - `clean --plan` **nunca** incluye las raíces de la lista blanca (p. ej.
