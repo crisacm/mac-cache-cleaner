@@ -170,6 +170,17 @@ y este proyecto se adhiere a [Versionado Semántico](https://semver.org/lang/es/
 
 ### Corregido
 
+- **El escaneo completo (`--full`, o cualquier escaneo que recorra directorios
+  cambiados) fallaba y se reportaba como cancelación.** El escritor transaccional
+  (`store.ScanTx`) usa un único `*sql.Tx`, y el escáner lo llamaba desde varios
+  goroutines a la vez (`PruneDir`/`UnchangedDir` desde los workers, `InsertEntries`
+  desde el escritor). Un `*sql.Tx` **no es seguro para uso concurrente**: SQLite
+  devolvía `database table is locked`. Ahora `ScanTx` serializa sus métodos con un
+  mutex. Además, un fallo de escritura ya **no se enmascara** como «cancelado por
+  el usuario»: el escáner informa del error real y reserva el mensaje de
+  cancelación para una cancelación de verdad (usa el contexto **padre** para
+  detectar `Ctrl+C`/`--timeout`). También se comprueba el fallo tras el volcado
+  final, que antes se tragaba en escaneos pequeños.
 - **`Ctrl+C` ya no se queda sin efecto.** `signal.NotifyContext` desactivaba el
   comportamiento por defecto de `SIGINT` y sólo cancelaba un contexto; como el
   escaneo y el servidor MCP no lo observaban, el proceso quedaba «congelado» y

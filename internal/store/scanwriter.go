@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/crisacm/mac-cache-cleaner/internal/domain"
@@ -19,10 +20,16 @@ import (
 // The index holds one current view of the disk keyed by path, so a scan only
 // rewrites the paths it actually walks and prunes the ones that vanished under
 // the directories it walked.
+//
+// A *sql.Tx is NOT safe for concurrent use, and the scanner calls these methods
+// from many goroutines (workers call UnchangedDir/PruneDir while the writer
+// goroutine calls InsertEntries). mu serializes them onto the single write
+// connection; the index has one writer anyway, so this costs nothing real.
 type ScanTx struct {
 	store  *Store
 	tx     *sql.Tx
 	scanID string
+	mu     sync.Mutex
 	// hadRows records whether the index already had entries when the scan
 	// started; when false there is nothing to prune.
 	hadRows bool
@@ -85,6 +92,8 @@ func (t *ScanTx) InsertEntries(ctx context.Context, entries []domain.Entry) erro
 	if len(entries) == 0 {
 		return nil
 	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	if err := t.dropIndexes(ctx); err != nil {
 		return err
 	}
@@ -100,6 +109,8 @@ func (t *ScanTx) PruneDir(ctx context.Context, dir string, keep []string) error 
 	if !t.hadRows {
 		return nil
 	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	rows, err := t.tx.QueryContext(ctx, `SELECT path FROM entries WHERE parent = ?`, dir)
 	if err != nil {
 		return fmt.Errorf("store: list children of %s: %w", dir, err)
@@ -147,6 +158,8 @@ func (t *ScanTx) PruneDir(ctx context.Context, dir string, keep []string) error 
 // mtime, returning its stored subtree sizes so the caller can roll them up
 // without walking or rewriting the subtree.
 func (t *ScanTx) UnchangedDir(ctx context.Context, path string, mtime time.Time) (alloc, logical int64, ok bool, err error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	var isDir int
 	var stored string
 	err = t.tx.QueryRowContext(ctx,
@@ -167,12 +180,16 @@ func (t *ScanTx) UnchangedDir(ctx context.Context, path string, mtime time.Time)
 // ReplaceInaccessible stores the inaccessible paths of this scan, replacing the
 // previous generation's list.
 func (t *ScanTx) ReplaceInaccessible(ctx context.Context, items []domain.Inaccessible) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	return replaceInaccessibleTx(ctx, t.tx, items)
 }
 
 // Commit marks the scan finished, prunes older scan rows and recreates the
 // indexes in the same transaction, then publishes everything.
 func (t *ScanTx) Commit(ctx context.Context, finishedAt time.Time, partial bool, keep int) (int64, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	const q = `UPDATE scans SET finished_at = ?, partial = ? WHERE id = ?`
 	if _, err := t.tx.ExecContext(ctx, q, formatTime(finishedAt), boolToInt(partial), t.scanID); err != nil {
 		return 0, fmt.Errorf("store: finish scan: %w", err)
@@ -203,6 +220,8 @@ func (t *ScanTx) Commit(ctx context.Context, finishedAt time.Time, partial bool,
 
 // Rollback discards the whole scan (cancelled or failed).
 func (t *ScanTx) Rollback(_ context.Context) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	if err := t.tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
 		return fmt.Errorf("store: rollback scan: %w", err)
 	}

@@ -151,7 +151,11 @@ func (s *Scanner) Scan(ctx context.Context, opts Options) (Result, error) {
 		roots = append(roots, v.Path)
 	}
 
-	ctx, cancel := context.WithCancel(ctx)
+	// Keep the parent context separate: the walker cancels its OWN derived
+	// context to stop the workers on a failure, and that must never be reported
+	// as an external cancellation (Ctrl+C/--timeout).
+	parentCtx := ctx
+	ctx, cancel := context.WithCancel(parentCtx)
 	defer cancel()
 
 	w := &walker{
@@ -211,10 +215,16 @@ func (s *Scanner) Scan(ctx context.Context, opts Options) (Result, error) {
 	}
 	wg.Wait()
 
-	// A cancelled walk is not a partial result: report it as a cancellation so
-	// the caller rolls the in-progress scan back (SEC-COD-04). The writer is
-	// stopped first so no write races the caller's rollback DELETE.
-	if err := ctx.Err(); err != nil {
+	// A recorded failure wins over cancellation: it is the real error and must
+	// not be masked as a user cancellation. The writer is stopped first so no
+	// write is in flight when the caller rolls the scan back (SEC-COD-04).
+	if err := w.failed(); err != nil {
+		w.closeProgress()
+		w.closeWriter()
+		return Result{}, err
+	}
+	// Only the PARENT context means a real external cancellation.
+	if err := parentCtx.Err(); err != nil {
 		w.closeProgress()
 		w.closeWriter()
 		return Result{}, err
@@ -223,13 +233,13 @@ func (s *Scanner) Scan(ctx context.Context, opts Options) (Result, error) {
 	w.emitFinalProgress()
 	w.closeProgress()
 
+	// result enqueues the directory entries and then closes the writer, which
+	// performs the final flush. A failure there must not be swallowed.
+	res := w.result(roots)
 	if err := w.failed(); err != nil {
-		w.closeWriter()
 		return Result{}, err
 	}
-
-	// result enqueues the directory entries and then closes the writer.
-	return w.result(roots), nil
+	return res, nil
 }
 
 // dirAgg accumulates a directory's own and subtree sizes.

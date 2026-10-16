@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -261,6 +262,21 @@ func (s *stubIncremental) UnchangedDir(_ context.Context, _ string, mtime time.T
 		return s.alloc, s.logical, true, nil
 	}
 	return 0, 0, false, nil
+}
+
+// TestScanWriteErrorIsNotMaskedAsCancel verifies that a sink failure is reported
+// as that failure, never as a user cancellation (the walker cancels its own
+// context to stop the workers, which used to mask the real error).
+func TestScanWriteErrorIsNotMaskedAsCancel(t *testing.T) {
+	home := buildFixture(t)
+	boom := errors.New("emit boom")
+	_, err := New(fakePolicy{}).Scan(context.Background(), Options{
+		ScanID: "e1",
+		Roots:  []string{home},
+		Emit:   func(context.Context, []domain.Entry) error { return boom },
+	})
+	require.ErrorIs(t, err, boom, "a writer failure must surface as itself")
+	require.NotErrorIs(t, err, context.Canceled, "a writer failure must not look like Ctrl+C")
 }
 
 // TestIncrementalReuseSkipsUnchangedDir verifies that a directory whose mtime is
