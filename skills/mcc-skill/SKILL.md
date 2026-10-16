@@ -12,6 +12,20 @@ permite **planificar** limpieza. Todo es local: **sin red ni telemetría**.
 > **Regla de oro: NADA se elimina.** La limpieza crea un *plan* inmutable y, al
 > aplicarlo, **mueve a la Papelera** (`~/.Trash`). No existe borrado permanente.
 
+## Si `mcc` no está instalado
+
+Esta skill **no instala** el binario. Antes de usar cualquier comando, comprueba
+que existe (`mcc --version`); si falta, pide al usuario instalarlo (acción humana,
+con su confirmación):
+
+```bash
+brew tap crisacm/tap && brew install mcc   # Homebrew (recomendado)
+```
+
+Alternativas: descargar el binario de los
+[releases](https://github.com/crisacm/mac-cache-cleaner/releases) o compilar con
+`make build` desde el código. No instales nada sin permiso del usuario.
+
 ## Cuándo usar esta skill
 
 - "¿Qué ocupa espacio en mi Mac?", "¿por qué se llenó el disco?"

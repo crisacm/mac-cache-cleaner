@@ -23,10 +23,29 @@ Tiene una **TUI** interactiva y un **servidor MCP** para agentes de IA. Nada se 
 
 ## Instalación
 
+### Homebrew (recomendado)
+
+```bash
+brew tap crisacm/tap
+brew install mcc
+```
+
+La fórmula vive en [`crisacm/homebrew-tap`](https://github.com/crisacm/homebrew-tap) y compila el binario desde el código fuente (Homebrew instala Go como dependencia de build). Comprueba la versión instalada con `mcc --version`.
+
+### Desde el código
+
 ```bash
 git clone https://github.com/crisacm/mac-cache-cleaner.git mcc && cd mcc
 make build          # genera ./bin/mcc (sin CGO)
 ```
+
+### Skill para agentes
+
+```bash
+npx skills add crisacm/mac-cache-cleaner --skill mcc-skill
+```
+
+Consulta [`skills/mcc-skill/SKILL.md`](./skills/mcc-skill/SKILL.md) para saber cómo la usa un agente.
 
 ## Uso
 
@@ -43,6 +62,7 @@ mcc permissions [show|grant|revoke <root>]    # política efectiva y consentimie
 mcc data show | purge                         # qué se guarda, dónde, y cómo borrarlo
 mcc tui                                       # interfaz interactiva
 mcc mcp                                       # servidor MCP (stdio) para agentes
+mcc --version                                 # versión del binario
 ```
 
 Los comandos de lectura aceptan `--json` y `--no-color`.
@@ -96,4 +116,4 @@ No abras issues públicos para problemas de seguridad. Consulta el procedimiento
 
 ## Licencia
 
-Por definir.
+MIT. Consulta [`LICENSE`](./LICENSE).

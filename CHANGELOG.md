@@ -9,6 +9,15 @@ y este proyecto se adhiere a [Versionado Semántico](https://semver.org/lang/es/
 
 ### Añadido
 
+- **Versión del binario** (`mcc --version`): se inyecta en el build con
+  `-ldflags "-X main.version=…"` (el `Makefile` usa `git describe`), para que
+  Homebrew y los usuarios puedan comprobarla.
+- **Licencia MIT** (`LICENSE`) e **instalación por Homebrew**
+  (`brew tap crisacm/tap && brew install mcc`) desde la fórmula publicada en el
+  tap [`crisacm/homebrew-tap`](https://github.com/crisacm/homebrew-tap).
+- **Skill distribuible como Agent Skill** con
+  `npx skills add crisacm/mac-cache-cleaner --skill mcc-skill`; la skill ahora
+  indica cómo instalar el binario (`brew`) cuando `mcc` no está disponible.
 - **Servidor MCP** (`internal/mcp`, comando `mcc mcp`): servidor **stdio** (JSON-RPC)
   para agentes, con transporte propio sin dependencias nuevas. Expone 12
   herramientas de **solo lectura + `create_plan`/`get_plan`**; **no existe**
