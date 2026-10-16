@@ -2,6 +2,9 @@
 /bin/
 *.exe
 
+# GoReleaser output
+/dist/
+
 # Local databases / index artifacts
 *.db
 *.db-journal

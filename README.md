@@ -94,6 +94,13 @@ Requiere una terminal. Reutiliza los mismos servicios que la CLI y **no decide a
 - Skill para agentes: [`skills/mcc-skill/SKILL.md`](./skills/mcc-skill/SKILL.md).
 - Reglas de seguridad del servidor: [`SECURITY.md`](./SECURITY.md) §8.
 
+## Distribución y releases
+
+- **Binarios precompilados**: cada tag `vX.Y.Z` dispara [`.github/workflows/release.yml`](./.github/workflows/release.yml) (GoReleaser), que publica en GitHub Releases los binarios `darwin/arm64` y `darwin/amd64` junto con sus checksums y el changelog.
+- **Homebrew**: el mismo flujo actualiza la fórmula en [`crisacm/homebrew-tap`](https://github.com/crisacm/homebrew-tap). Requiere el secreto **`HOMEBREW_TAP_TOKEN`** (PAT con *Contents: read and write* sobre el tap), que se configura una vez con `gh secret set HOMEBREW_TAP_TOKEN`. Sin él, GoReleaser publica la release pero falla al actualizar la fórmula.
+- Hasta la primera release automatizada, la fórmula del tap compila desde el código fuente (ver *Instalación*).
+- Configuración en [`.goreleaser.yaml`](./.goreleaser.yaml). Validación local: `goreleaser release --snapshot --clean --skip=publish` (GoReleaser avisa de que `brews` está deprecado en favor de los casks).
+
 ## Seguridad y privacidad
 
 Las reglas completas están en [`SECURITY.md`](./SECURITY.md). Resumen:

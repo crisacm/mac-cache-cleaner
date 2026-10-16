@@ -15,6 +15,10 @@ y este proyecto se adhiere a [Versionado Semántico](https://semver.org/lang/es/
 - **Licencia MIT** (`LICENSE`) e **instalación por Homebrew**
   (`brew tap crisacm/tap && brew install mcc`) desde la fórmula publicada en el
   tap [`crisacm/homebrew-tap`](https://github.com/crisacm/homebrew-tap).
+- **Publicación automatizada** (`.goreleaser.yaml` +
+  `.github/workflows/release.yml`): un tag `vX.Y.Z` publica en GitHub Releases
+  los binarios `darwin/arm64` y `darwin/amd64` con sus checksums y el changelog,
+  y actualiza la fórmula del tap de Homebrew (solo macOS).
 - **Skill distribuible como Agent Skill** con
   `npx skills add crisacm/mac-cache-cleaner --skill mcc-skill`; la skill ahora
   indica cómo instalar el binario (`brew`) cuando `mcc` no está disponible.

@@ -241,6 +241,7 @@ Also required:
 - Build order: `domain` + `store` + `policy` -> `scanner` -> `apps` + `cache` -> `large` -> `orphan` -> `cleaner` -> `cli` -> `tui` -> `mcp`.
 - Any change to how the tool is used must keep `README.md`, `INSTRUCTIONS.md` and `skills/mcc-skill/SKILL.md` in sync **in the same commit** (the skill is updated whenever the behavior changes).
 - Commits follow **Conventional Commits** (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`). Versioning follows **SemVer**.
+- **Releases**: push a `vX.Y.Z` tag → `.github/workflows/release.yml` runs GoReleaser, publishes the GitHub Release (darwin arm64/amd64 binaries + checksums) and refreshes the Homebrew formula in `crisacm/homebrew-tap` (needs the `HOMEBREW_TAP_TOKEN` secret). `mcc --version` comes from `-ldflags "-X main.version=…"`; the `Makefile` derives it from `git describe`.
 - One logical change per PR/commit. Do not mix refactors with behavior changes.
 - If a `SECURITY.md` rule cannot be satisfied, stop, document it and ask; do not work around it.
 

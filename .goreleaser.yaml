@@ -1,0 +1,66 @@
+# GoReleaser configuration for MCC (Mac Cache Cleaner).
+#
+# MCC is macOS-only, so only darwin binaries are built (arm64 + amd64).
+# A tagged push (v*) triggers .github/workflows/release.yml, which publishes the
+# GitHub Release and refreshes the Homebrew formula in crisacm/homebrew-tap.
+#
+# Validate locally:  goreleaser check
+# Dry run:           goreleaser release --snapshot --clean --skip=publish
+version: 2
+
+project_name: mcc
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: mcc
+    main: ./cmd/mcc
+    binary: mcc
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+    goarch:
+      - arm64
+      - amd64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+
+archives:
+  - id: mcc
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+
+brews:
+  - name: mcc
+    repository:
+      owner: crisacm
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/crisacm/mac-cache-cleaner"
+    description: "Index and report macOS disk usage (apps, caches, orphans, large items)"
+    license: MIT
+    # Do not push a formula for pre-releases.
+    skip_upload: auto
+    test: |
+      system "#{bin}/mcc", "--version"
